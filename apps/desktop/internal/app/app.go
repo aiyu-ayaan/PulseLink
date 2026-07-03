@@ -20,6 +20,17 @@ import (
 	"github.com/aiyu-ayaan/pulselink/apps/desktop/internal/service"
 	"github.com/aiyu-ayaan/pulselink/apps/desktop/internal/storage"
 	"github.com/aiyu-ayaan/pulselink/apps/desktop/internal/transport"
+
+	"github.com/aiyu-ayaan/pulselink/apps/desktop/internal/services/apps"
+	"github.com/aiyu-ayaan/pulselink/apps/desktop/internal/services/brightness"
+	"github.com/aiyu-ayaan/pulselink/apps/desktop/internal/services/clipboard"
+	"github.com/aiyu-ayaan/pulselink/apps/desktop/internal/services/filetransfer"
+	"github.com/aiyu-ayaan/pulselink/apps/desktop/internal/services/input"
+	"github.com/aiyu-ayaan/pulselink/apps/desktop/internal/services/media"
+	"github.com/aiyu-ayaan/pulselink/apps/desktop/internal/services/notification"
+	"github.com/aiyu-ayaan/pulselink/apps/desktop/internal/services/power"
+	"github.com/aiyu-ayaan/pulselink/apps/desktop/internal/services/sysinfo"
+	"github.com/aiyu-ayaan/pulselink/apps/desktop/internal/services/volume"
 )
 
 // Version is the backend build version, advertised in the handshake.
@@ -79,6 +90,18 @@ func New(cfgPath string) (*App, error) {
 		bus.Publish(eventbus.Event{Topic: TopicPresence, Payload: deviceIDs})
 	}
 
+	// Forward clipboard changes from the eventbus to connected devices.
+	bus.Subscribe("clipboard.changed", func(ev eventbus.Event) {
+		payload, ok := ev.Payload.(clipboard.ClipboardPayload)
+		if !ok {
+			return
+		}
+		env, err := protocol.NewEvent("clipboard", "changed", payload)
+		if err == nil {
+			hub.Broadcast(env)
+		}
+	})
+
 	if err := a.buildServer(); err != nil {
 		store.Close()
 		return nil, err
@@ -111,7 +134,45 @@ func (a *App) buildServer() error {
 // registerServices constructs and registers every feature module. New modules
 // are added here as the backend grows.
 func (a *App) registerServices() {
-	// Services are registered in later chunks (media, brightness, power, ...).
+	mediaSvc := media.New(a.log, a.bus)
+	a.registry.Register(mediaSvc)
+	a.router.Register(mediaSvc.Name(), mediaSvc)
+
+	volumeSvc := volume.New(a.log, a.bus)
+	a.registry.Register(volumeSvc)
+	a.router.Register(volumeSvc.Name(), volumeSvc)
+
+	brightnessSvc := brightness.New(a.log, a.bus)
+	a.registry.Register(brightnessSvc)
+	a.router.Register(brightnessSvc.Name(), brightnessSvc)
+
+	clipboardSvc := clipboard.New(a.log, a.bus)
+	a.registry.Register(clipboardSvc)
+	a.router.Register(clipboardSvc.Name(), clipboardSvc)
+
+	powerSvc := power.New(a.log, a.bus)
+	a.registry.Register(powerSvc)
+	a.router.Register(powerSvc.Name(), powerSvc)
+
+	sysinfoSvc := sysinfo.New(a.log, a.bus)
+	a.registry.Register(sysinfoSvc)
+	a.router.Register(sysinfoSvc.Name(), sysinfoSvc)
+
+	appsSvc := apps.New(a.log, a.bus)
+	a.registry.Register(appsSvc)
+	a.router.Register(appsSvc.Name(), appsSvc)
+
+	inputSvc := input.New(a.log, a.bus)
+	a.registry.Register(inputSvc)
+	a.router.Register(inputSvc.Name(), inputSvc)
+
+	notificationSvc := notification.New(a.log, a.bus)
+	a.registry.Register(notificationSvc)
+	a.router.Register(notificationSvc.Name(), notificationSvc)
+
+	filetransferSvc := filetransfer.New(a.log, a.bus)
+	a.registry.Register(filetransferSvc)
+	a.router.Register(filetransferSvc.Name(), filetransferSvc)
 }
 
 // Start brings up storage-backed services and the network server.
