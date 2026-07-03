@@ -1,0 +1,16 @@
+# Go
+/pulselink
+/pulselink.exe
+/pulselinkd
+/pulselinkd.exe
+*.exe
+*.test
+*.out
+
+# Local data / config produced at runtime
+*.db
+*.db-shm
+*.db-wal
+
+# Editor / OS
+.DS_Store
