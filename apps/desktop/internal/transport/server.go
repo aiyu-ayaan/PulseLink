@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"os"
 	"time"
 
 	"github.com/coder/websocket"
@@ -56,6 +57,15 @@ func (s *Server) Start(ctx context.Context) error {
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
+
+	// Serve static UI assets if compiled
+	distDir := "./apps/desktop/frontend/dist"
+	if _, err := os.Stat(distDir); err == nil {
+		s.log.Info("serving static assets from", "dir", distDir)
+		mux.Handle("/", http.FileServer(http.Dir(distDir)))
+	} else {
+		s.log.Debug("static frontend assets not found, running api mode only")
+	}
 
 	ln, err := net.Listen("tcp", s.cfg.Addr)
 	if err != nil {

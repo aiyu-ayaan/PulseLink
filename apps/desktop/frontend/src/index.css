@@ -1,0 +1,84 @@
+@import "tailwindcss";
+@import url('https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600;700&family=Fira+Sans:wght@300;400;500;600;700&display=swap');
+
+@theme {
+  --color-primary: #0F172A;
+  --color-secondary: #1E293B;
+  --color-accent: #22C55E;
+  --color-background-oled: #020617;
+  --color-card-dark: rgba(15, 23, 42, 0.45);
+  --color-card-border: rgba(255, 255, 255, 0.08);
+  
+  --font-mono: "Fira Code", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  --font-sans: "Fira Sans", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+}
+
+html, body, #root {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  background-color: #020617; /* Deep midnight background */
+  color: #F8FAFC; /* Slate-50 text */
+  font-family: var(--font-sans);
+  overflow-x: hidden;
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: rgba(15, 23, 42, 0.1);
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+/* Mica / Acrylic Effect */
+.glass-panel {
+  background: rgba(15, 23, 42, 0.65);
+  backdrop-filter: blur(12px) saturate(125%);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  box-shadow: 0 4px 30px rgba(0, 0, 0, 0.5);
+}
+
+.glass-card {
+  background: rgba(30, 41, 59, 0.35);
+  backdrop-filter: blur(8px);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.glass-card:hover {
+  border-color: rgba(34, 197, 94, 0.3); /* green-accent */
+  background: rgba(30, 41, 59, 0.5);
+  box-shadow: 0 0 15px rgba(34, 197, 94, 0.1);
+  transform: translateY(-2px);
+}
+
+/* Pulsing accent status dot */
+.pulse-green {
+  box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.7);
+  animation: pulse-green-anim 2s infinite;
+}
+
+@keyframes pulse-green-anim {
+  0% {
+    transform: scale(0.95);
+    box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.7);
+  }
+  70% {
+    transform: scale(1);
+    box-shadow: 0 0 0 8px rgba(34, 197, 94, 0);
+  }
+  100% {
+    transform: scale(0.95);
+    box-shadow: 0 0 0 0 rgba(34, 197, 94, 0);
+  }
+}

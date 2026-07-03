@@ -29,6 +29,7 @@ import (
 	"github.com/aiyu-ayaan/pulselink/apps/desktop/internal/services/media"
 	"github.com/aiyu-ayaan/pulselink/apps/desktop/internal/services/notification"
 	"github.com/aiyu-ayaan/pulselink/apps/desktop/internal/services/power"
+	"github.com/aiyu-ayaan/pulselink/apps/desktop/internal/services/settings"
 	"github.com/aiyu-ayaan/pulselink/apps/desktop/internal/services/sysinfo"
 	"github.com/aiyu-ayaan/pulselink/apps/desktop/internal/services/volume"
 )
@@ -173,6 +174,10 @@ func (a *App) registerServices() {
 	filetransferSvc := filetransfer.New(a.log, a.bus)
 	a.registry.Register(filetransferSvc)
 	a.router.Register(filetransferSvc.Name(), filetransferSvc)
+
+	settingsSvc := settings.New(a.log, a.bus, a.cfgPath)
+	a.registry.Register(settingsSvc)
+	a.router.Register(settingsSvc.Name(), settingsSvc)
 }
 
 // Start brings up storage-backed services and the network server.
