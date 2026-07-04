@@ -27,6 +27,7 @@ type Client struct {
 	DeviceID     string   // resolved during handshake
 	DeviceName   string
 	Capabilities []string // negotiated for this session
+	isAllowed    func(capability string) bool
 
 	conn   *websocket.Conn
 	send   chan protocol.Envelope
@@ -142,6 +143,9 @@ func (c *Client) readPump(ctx context.Context, router *Router) {
 func (c *Client) allowed(capability string) bool {
 	if capability == protocol.CapHandshake {
 		return true
+	}
+	if c.isAllowed != nil && !c.isAllowed(capability) {
+		return false
 	}
 	for _, cap := range c.Capabilities {
 		if cap == capability {

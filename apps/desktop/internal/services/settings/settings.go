@@ -56,6 +56,7 @@ func (s *Service) Handle(ctx context.Context, req protocol.Envelope) (any, error
 			return nil, err
 		}
 		s.log.Info("settings saved successfully")
+		s.bus.Publish(eventbus.Event{Topic: "settings.changed", Payload: newCfg})
 		return newCfg, nil
 	default:
 		return nil, &protocol.Error{Code: protocol.CodeUnsupported, Message: "unknown settings action"}

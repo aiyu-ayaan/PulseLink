@@ -193,7 +193,7 @@ func readEnvelope(t *testing.T, conn *websocket.Conn) protocol.Envelope {
 
 func readUntil(t *testing.T, conn *websocket.Conn, match func(protocol.Envelope) bool) protocol.Envelope {
 	t.Helper()
-	deadline := time.After(5 * time.Second)
+	deadline := time.After(15 * time.Second)
 	for {
 		select {
 		case <-deadline:

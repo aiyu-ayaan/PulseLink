@@ -19,6 +19,24 @@ type Config struct {
 	LogLevel string `json:"logLevel"`
 	// DeviceName is how this PC advertises itself for discovery.
 	DeviceName string `json:"deviceName"`
+	// Permissions controls which features the mobile device is allowed to access.
+	Permissions FeaturePermissions `json:"permissions"`
+	// MaxCompatibilityMode uses software gamma adjustment for brightness controls.
+	MaxCompatibilityMode bool `json:"maxCompatibilityMode"`
+}
+
+// FeaturePermissions controls which features the mobile device is allowed to access.
+type FeaturePermissions struct {
+	Media         bool `json:"media"`
+	Volume        bool `json:"volume"`
+	Brightness    bool `json:"brightness"`
+	Clipboard     bool `json:"clipboard"`
+	Notifications bool `json:"notifications"`
+	Apps          bool `json:"apps"`
+	Power         bool `json:"power"`
+	SysInfo       bool `json:"sysinfo"`
+	Input         bool `json:"input"`
+	FileTransfer  bool `json:"filetransfer"`
 }
 
 // ServerConfig configures the network listener.
@@ -52,6 +70,19 @@ func Default() Config {
 		DatabasePath: filepath.Join(DataDir(), "pulselink.db"),
 		LogLevel:     "info",
 		DeviceName:   host,
+		Permissions: FeaturePermissions{
+			Media:         true,
+			Volume:        true,
+			Brightness:    true,
+			Clipboard:     true,
+			Notifications: true,
+			Apps:          true,
+			Power:         true,
+			SysInfo:       true,
+			Input:         true,
+			FileTransfer:  true,
+		},
+		MaxCompatibilityMode: false,
 	}
 }
 

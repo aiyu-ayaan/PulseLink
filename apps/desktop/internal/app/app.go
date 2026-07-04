@@ -143,6 +143,25 @@ func New(cfgPath string) (*App, error) {
 		}
 	})
 
+	// Forward settings changes from the eventbus to update our in-memory config.
+	bus.Subscribe("settings.changed", func(ev eventbus.Event) {
+		if newCfg, ok := ev.Payload.(config.Config); ok {
+			a.cfg = newCfg
+		}
+	})
+
+	// Forward brightness changes from the eventbus to connected devices.
+	bus.Subscribe("brightness.changed", func(ev eventbus.Event) {
+		payload, ok := ev.Payload.(brightness.BrightnessState)
+		if !ok {
+			return
+		}
+		env, err := protocol.NewEvent("brightness", "changed", payload)
+		if err == nil {
+			hub.Broadcast(env)
+		}
+	})
+
 	// Forward pairing requests from the eventbus to connected devices.
 	bus.Subscribe("pairing.request", func(ev eventbus.Event) {
 		payload, ok := ev.Payload.(transport.DeviceInfo)
@@ -226,6 +245,7 @@ func (a *App) buildServer() error {
 	// Use the real database-backed Authenticator
 	authSvc := auth.New(a.store, a.bus)
 	a.server = transport.NewServer(scfg, a.log, a.hub, a.router, authSvc)
+	a.server.IsAllowed = a.isFeatureAllowed
 	return nil
 }
 
@@ -248,7 +268,7 @@ func (a *App) registerServices() {
 	a.registry.Register(pairingSvc)
 	a.router.Register(pairingSvc.Name(), pairingSvc)
 
-	brightnessSvc := brightness.New(a.log, a.bus)
+	brightnessSvc := brightness.New(a.log, a.bus, a.Config)
 	a.registry.Register(brightnessSvc)
 	a.router.Register(brightnessSvc.Name(), brightnessSvc)
 
@@ -325,3 +345,36 @@ func (a *App) Store() *storage.Store { return a.store }
 
 // Hub exposes the connection hub for the UI/API layer.
 func (a *App) Hub() *transport.Hub { return a.hub }
+
+// isFeatureAllowed checks if a specific capability is allowed based on active settings.
+func (a *App) isFeatureAllowed(deviceID string, capability string) bool {
+	if deviceID == "desktop-ui" {
+		return true
+	}
+	switch capability {
+	case "media":
+		return a.cfg.Permissions.Media
+	case "volume":
+		return a.cfg.Permissions.Volume
+	case "brightness":
+		return a.cfg.Permissions.Brightness
+	case "clipboard":
+		return a.cfg.Permissions.Clipboard
+	case "notification":
+		return a.cfg.Permissions.Notifications
+	case "apps":
+		return a.cfg.Permissions.Apps
+	case "power":
+		return a.cfg.Permissions.Power
+	case "sysinfo":
+		return a.cfg.Permissions.SysInfo
+	case "input":
+		return a.cfg.Permissions.Input
+	case "filetransfer":
+		return a.cfg.Permissions.FileTransfer
+	case "pairing":
+		return true // Pairing must always be allowed to establish/authorize connection
+	default:
+		return false
+	}
+}

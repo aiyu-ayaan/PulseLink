@@ -31,11 +31,12 @@ type Config struct {
 
 // Server accepts WebSocket connections and wires them to the router and hub.
 type Server struct {
-	cfg    Config
-	log    *slog.Logger
-	hub    *Hub
-	router *Router
-	auth   Authenticator
+	cfg       Config
+	log       *slog.Logger
+	hub       *Hub
+	router    *Router
+	auth      Authenticator
+	IsAllowed func(deviceID string, capability string) bool
 
 	http *http.Server
 	ln   net.Listener
@@ -106,6 +107,11 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 	}
 
 	client := newClient(uuid.NewString(), conn, s.log)
+	if s.IsAllowed != nil {
+		client.isAllowed = func(cap string) bool {
+			return s.IsAllowed(client.DeviceID, cap)
+		}
+	}
 
 	if !s.handshake(r.Context(), client) {
 		client.Close()
@@ -161,6 +167,15 @@ func (s *Server) handshake(parent context.Context, c *Client) bool {
 	// Offered = server capabilities, optionally narrowed by device permissions,
 	// then intersected with what the client asked for.
 	offered := s.router.Capabilities()
+	if hello.DeviceID != "desktop-ui" && s.IsAllowed != nil {
+		var filtered []string
+		for _, cap := range offered {
+			if s.IsAllowed(hello.DeviceID, cap) {
+				filtered = append(filtered, cap)
+			}
+		}
+		offered = filtered
+	}
 	if res.AllowedCapabilities != nil {
 		offered = protocol.Negotiate(offered, res.AllowedCapabilities)
 	}
