@@ -40,9 +40,14 @@ func Default() Config {
 	}
 	return Config{
 		Server: ServerConfig{
-			Host:      "0.0.0.0",
-			Port:      9843,
-			EnableTLS: true,
+			Host: "0.0.0.0",
+			Port: 9843,
+			// ponytail: MVP is plain ws:// — the Android client and the
+			// http-served desktop UI both connect with ws, and a self-signed
+			// cert can't be trusted by the phone without pairing/cert-trust
+			// wiring. Flip to true (self-signed cert auto-generates) once that
+			// lands. The TLS code path already exists in transport.Server.
+			EnableTLS: false,
 		},
 		DatabasePath: filepath.Join(DataDir(), "pulselink.db"),
 		LogLevel:     "info",
