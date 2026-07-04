@@ -67,75 +67,42 @@ func (a *Authenticator) Authenticate(hello protocol.ClientHello) (transport.Auth
 		return transport.AuthResult{}, err
 	}
 
-	// Check pairing token
-	pair, err := a.store.Pairings.Get(hello.Token)
-	if err == nil && !pair.Used && time.Now().Before(pair.ExpiresAt) {
-		d := storage.Device{
-			ID:           hello.DeviceID,
-			Name:         hello.DeviceName,
-			PublicKey:    hello.Token,
-			Trusted:      false,
-			PairedAt:     time.Now(),
-			LastSeen:     time.Now(),
-			Capabilities: hello.Capabilities,
-		}
-		if err := a.store.Devices.Upsert(d); err != nil {
-			return transport.AuthResult{}, err
-		}
-		
+	// Device is not in database. Create an untrusted entry and trigger pairing request.
+	publicKey := hello.Token
+	if publicKey == "" {
+		publicKey = "manual-pairing"
+	}
+
+	d := storage.Device{
+		ID:           hello.DeviceID,
+		Name:         hello.DeviceName,
+		PublicKey:    publicKey,
+		Trusted:      false,
+		PairedAt:     time.Now(),
+		LastSeen:     time.Now(),
+		Capabilities: hello.Capabilities,
+	}
+	if err := a.store.Devices.Upsert(d); err != nil {
+		return transport.AuthResult{}, err
+	}
+
+	if hello.Token != "" && hello.Token != "desktop-local" {
 		_ = a.store.Pairings.MarkUsed(hello.Token, hello.DeviceID)
-
-		a.bus.Publish(eventbus.Event{
-			Topic: "pairing.request",
-			Payload: transport.DeviceInfo{
-				ID:           hello.DeviceID,
-				Name:         hello.DeviceName,
-				Capabilities: hello.Capabilities,
-			},
-		})
-
-		return transport.AuthResult{
-			Accepted:            true,
-			DeviceID:            hello.DeviceID,
-			DeviceName:          hello.DeviceName,
-			AllowedCapabilities: []string{"pairing"},
-		}, nil
 	}
 
-	// For dev / fallback mode
-	if hello.Token == "desktop-local" {
-		d := storage.Device{
+	a.bus.Publish(eventbus.Event{
+		Topic: "pairing.request",
+		Payload: transport.DeviceInfo{
 			ID:           hello.DeviceID,
 			Name:         hello.DeviceName,
-			PublicKey:    "desktop-local",
-			Trusted:      false,
-			PairedAt:     time.Now(),
-			LastSeen:     time.Now(),
 			Capabilities: hello.Capabilities,
-		}
-		if err := a.store.Devices.Upsert(d); err != nil {
-			return transport.AuthResult{}, err
-		}
-
-		a.bus.Publish(eventbus.Event{
-			Topic: "pairing.request",
-			Payload: transport.DeviceInfo{
-				ID:           hello.DeviceID,
-				Name:         hello.DeviceName,
-				Capabilities: hello.Capabilities,
-			},
-		})
-
-		return transport.AuthResult{
-			Accepted:            true,
-			DeviceID:            hello.DeviceID,
-			DeviceName:          hello.DeviceName,
-			AllowedCapabilities: []string{"pairing"},
-		}, nil
-	}
+		},
+	})
 
 	return transport.AuthResult{
-		Accepted: false,
-		Reason:   "pairing token invalid or expired",
+		Accepted:            true,
+		DeviceID:            hello.DeviceID,
+		DeviceName:          hello.DeviceName,
+		AllowedCapabilities: []string{"pairing"},
 	}, nil
 }
