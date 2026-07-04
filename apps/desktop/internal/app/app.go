@@ -228,7 +228,7 @@ func (a *App) registerServices() {
 	a.registry.Register(volumeSvc)
 	a.router.Register(volumeSvc.Name(), volumeSvc)
 
-	devicesSvc := devices.New(a.log, a.bus, a.hub)
+	devicesSvc := devices.New(a.log, a.bus, a.hub, a.store)
 	a.registry.Register(devicesSvc)
 	a.router.Register(devicesSvc.Name(), devicesSvc)
 

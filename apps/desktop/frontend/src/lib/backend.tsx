@@ -37,6 +37,16 @@ export interface DeviceInfo {
   capabilities: string[]
 }
 
+export interface DeviceHistoryItem {
+  id: string
+  name: string
+  trusted: boolean
+  online: boolean
+  pairedAt: number
+  lastSeen: number
+  capabilities: string[]
+}
+
 export interface BackendConfig {
   server: { host: string; port: number; enableTls: boolean; certFile: string; keyFile: string }
   databasePath: string
@@ -64,6 +74,7 @@ interface BackendState {
   port: string
   theme: 'dark' | 'light'
   devices: DeviceInfo[]
+  deviceHistory: DeviceHistoryItem[]
   pairingRequests: DeviceInfo[]
   setHost: (v: string) => void
   setPort: (v: string) => void
@@ -107,11 +118,13 @@ export function BackendProvider({ children }: { children: ReactNode }) {
   const [port, setPort] = useState('9843')
   const [theme, setTheme] = useState<'dark' | 'light'>('dark')
   const [devices, setDevices] = useState<DeviceInfo[]>([])
+  const [deviceHistory, setDeviceHistory] = useState<DeviceHistoryItem[]>([])
   const [pairingRequests, setPairingRequests] = useState<DeviceInfo[]>([])
 
   const wsRef = useRef<WebSocket | null>(null)
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const pairingPollRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // Use refs for the message handler so WebSocket callbacks always see the
   // latest state setters without recreating the WebSocket connection.
@@ -165,9 +178,13 @@ export function BackendProvider({ children }: { children: ReactNode }) {
           send('brightness', 'get')
           send('settings', 'get')
           send('devices', 'get')
+          send('devices', 'history')
           send('pairing', 'pending')
           if (pollRef.current) clearInterval(pollRef.current)
-          pollRef.current = setInterval(() => send('sysinfo', 'get'), 4000)
+          pollRef.current = setInterval(() => {
+            send('sysinfo', 'get')
+            send('devices', 'history')
+          }, 4000)
           if (pairingPollRef.current) clearInterval(pairingPollRef.current)
           pairingPollRef.current = setInterval(() => send('pairing', 'pending'), 5000)
         } else {
@@ -180,6 +197,7 @@ export function BackendProvider({ children }: { children: ReactNode }) {
         log(`✕ ${env.capability}.${env.action}: ${env.error.message}`)
         return
       }
+
       switch (env.capability) {
         case 'sysinfo':
           if (env.payload) setSysInfo(env.payload)
@@ -195,7 +213,11 @@ export function BackendProvider({ children }: { children: ReactNode }) {
           if (env.payload) setConfig(env.payload)
           break
         case 'devices':
-          if (env.payload) setDevices(env.payload)
+          if (env.action === 'history') {
+            if (env.payload) setDeviceHistory(env.payload)
+          } else {
+            if (env.payload) setDevices(env.payload)
+          }
           break
         case 'pairing':
           if (env.action === 'request') {
@@ -204,6 +226,7 @@ export function BackendProvider({ children }: { children: ReactNode }) {
                 if (prev.some((r) => r.id === env.payload.id)) return prev
                 return [...prev, env.payload]
               })
+              send('devices', 'history')
             }
           } else if (env.action === 'pending') {
             if (env.payload?.devices) {
@@ -216,6 +239,7 @@ export function BackendProvider({ children }: { children: ReactNode }) {
             if (devId) {
               setPairingRequests((prev) => prev.filter((r) => r.id !== devId))
             }
+            send('devices', 'history')
           }
           break
         case 'clipboard':
@@ -240,8 +264,23 @@ export function BackendProvider({ children }: { children: ReactNode }) {
   useEffect(() => { hostRef.current = host }, [host])
   useEffect(() => { portRef.current = port }, [port])
 
+  const connectRef = useRef<(() => void) | null>(null)
+
+  const scheduleReconnect = useCallback(() => {
+    if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current)
+    reconnectTimerRef.current = setTimeout(() => {
+      log('attempting automatic reconnection...')
+      connectRef.current?.()
+    }, 3000)
+  }, [log])
+
   const connect = useCallback(() => {
-    if (wsRef.current) wsRef.current.close()
+    if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current)
+    if (wsRef.current) {
+      wsRef.current.onclose = null
+      wsRef.current.onerror = null
+      wsRef.current.close()
+    }
     setStatus('connecting')
     setError(null)
     const h = hostRef.current
@@ -254,6 +293,10 @@ export function BackendProvider({ children }: { children: ReactNode }) {
       wsRef.current = ws
       ws.onopen = () => {
         setStatus('connected')
+        if (reconnectTimerRef.current) {
+          clearTimeout(reconnectTimerRef.current)
+          reconnectTimerRef.current = null
+        }
         ws.send(
           JSON.stringify({
             id: 'handshake_init',
@@ -285,18 +328,26 @@ export function BackendProvider({ children }: { children: ReactNode }) {
           hostRef.current = '127.0.0.1'
           setHost('127.0.0.1')
           setTimeout(connect, 200)
+        } else {
+          scheduleReconnect()
         }
       }
       ws.onclose = () => {
         setStatus('disconnected')
         if (pollRef.current) clearInterval(pollRef.current)
         if (pairingPollRef.current) clearInterval(pairingPollRef.current)
+        scheduleReconnect()
       }
     } catch (err: any) {
       setStatus('disconnected')
       setError(err.message)
+      scheduleReconnect()
     }
-  }, [log])
+  }, [log, scheduleReconnect])
+
+  useEffect(() => {
+    connectRef.current = connect
+  }, [connect])
 
   useEffect(() => {
     connect()
@@ -304,6 +355,7 @@ export function BackendProvider({ children }: { children: ReactNode }) {
       wsRef.current?.close()
       if (pollRef.current) clearInterval(pollRef.current)
       if (pairingPollRef.current) clearInterval(pairingPollRef.current)
+      if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current)
     }
     // connect() is now stable; auto-connect once on mount.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -333,6 +385,7 @@ export function BackendProvider({ children }: { children: ReactNode }) {
     port,
     theme,
     devices,
+    deviceHistory,
     pairingRequests,
     setHost,
     setPort,
