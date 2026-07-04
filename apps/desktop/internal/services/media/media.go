@@ -3,10 +3,18 @@ package media
 import (
 	"context"
 	"log/slog"
+	"time"
 
 	"github.com/aiyu-ayaan/pulselink/apps/desktop/internal/eventbus"
 	"github.com/aiyu-ayaan/pulselink/apps/desktop/internal/protocol"
 )
+
+type MediaState struct {
+	Title      string `json:"title"`
+	Artist     string `json:"artist"`
+	AlbumTitle string `json:"albumTitle"`
+	Status     string `json:"status"` // e.g. "Playing", "Paused", "Stopped"
+}
 
 type Service struct {
 	log *slog.Logger
@@ -35,16 +43,28 @@ func (s *Service) Stop(ctx context.Context) error {
 }
 
 func (s *Service) Handle(ctx context.Context, req protocol.Envelope) (any, error) {
+	var err error
 	switch req.Action {
 	case "play_pause":
-		return nil, s.PlayPause()
+		err = s.PlayPause()
 	case "next":
-		return nil, s.Next()
+		err = s.Next()
 	case "previous":
-		return nil, s.Previous()
+		err = s.Previous()
 	case "stop":
-		return nil, s.StopMedia()
+		err = s.StopMedia()
+	case "get":
+		return s.GetMediaState()
 	default:
 		return nil, &protocol.Error{Code: protocol.CodeUnsupported, Message: "unknown media action"}
 	}
+
+	if err != nil {
+		return nil, err
+	}
+
+	// Wait a moment for OS/players to update their GSMTC state
+	time.Sleep(500 * time.Millisecond)
+	return s.GetMediaState()
 }
+

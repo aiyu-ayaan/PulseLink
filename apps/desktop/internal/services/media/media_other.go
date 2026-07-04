@@ -21,3 +21,13 @@ func (s *Service) StopMedia() error {
 	s.log.Info("media action: stop (mocked)")
 	return nil
 }
+
+func (s *Service) GetMediaState() (MediaState, error) {
+	return MediaState{
+		Title:      "Mock Track",
+		Artist:     "Mock Artist",
+		AlbumTitle: "Mock Album",
+		Status:     "Playing",
+	}, nil
+}
+
