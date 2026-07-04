@@ -18,6 +18,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     val state get() = client.state
     val sysInfo get() = client.sysInfo
     val volume get() = client.volume
+    val mediaState get() = client.mediaState
     val error get() = client.error
 
     val lastHost get() = prefs.getString(KEY_HOST, "") ?: ""

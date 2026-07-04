@@ -60,6 +60,9 @@ class PulseClient(private val scope: CoroutineScope) {
     private val _volume = MutableStateFlow(Volume())
     val volume: StateFlow<Volume> = _volume.asStateFlow()
 
+    private val _mediaState = MutableStateFlow(MediaState())
+    val mediaState: StateFlow<MediaState> = _mediaState.asStateFlow()
+
     private val _error = MutableStateFlow<String?>(null)
     val error: StateFlow<String?> = _error.asStateFlow()
 
@@ -199,10 +202,14 @@ class PulseClient(private val scope: CoroutineScope) {
                 val hasFullAccess = w.capabilities.contains("sysinfo") || w.capabilities.contains("volume")
                 if (hasFullAccess) {
                     _state.value = ConnState.Ready
-                    Log.d("PulseClient", "Connection ready. Querying sysinfo and volume.")
-                    send("sysinfo", "get"); send("volume", "get")
+                    Log.d("PulseClient", "Connection ready. Querying sysinfo, volume, and media.")
+                    send("sysinfo", "get"); send("volume", "get"); send("media", "get")
                     poll = scope.launch(Dispatchers.IO) {
-                        while (isActive) { kotlinx.coroutines.delay(4000); send("sysinfo", "get") }
+                        while (isActive) {
+                            kotlinx.coroutines.delay(4000)
+                            send("sysinfo", "get")
+                            send("media", "get")
+                        }
                     }
                 } else if (w.capabilities.contains("pairing")) {
                     _state.value = ConnState.PairingPending
@@ -246,6 +253,13 @@ class PulseClient(private val scope: CoroutineScope) {
                 runCatching { json.decodeFromJsonElement(Volume.serializer(), p) }.getOrNull()?.let {
                     Log.d("PulseClient", "Updated volume: $it")
                     _volume.value = it
+                }
+            }
+            "media" -> {
+                val p = env.payload ?: return
+                runCatching { json.decodeFromJsonElement(MediaState.serializer(), p) }.getOrNull()?.let {
+                    Log.d("PulseClient", "Updated media state: $it")
+                    _mediaState.value = it
                 }
             }
             "pairing" -> {

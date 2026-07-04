@@ -53,6 +53,15 @@ data class SysInfo(
 @Serializable
 data class Volume(val level: Int = 0, val muted: Boolean = false)
 
+@Serializable
+data class MediaState(
+    val title: String = "",
+    val artist: String = "",
+    val albumTitle: String = "",
+    val status: String = "",
+)
+
+
 // Capabilities this client advertises in the hello. AllowAll server-side today.
 val CLIENT_CAPS = listOf(
     "media", "volume", "brightness", "clipboard", "power", "sysinfo",

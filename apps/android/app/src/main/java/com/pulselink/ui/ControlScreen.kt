@@ -41,11 +41,14 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.pulselink.net.SysInfo
 import com.pulselink.net.Volume
+import com.pulselink.net.MediaState
+import androidx.compose.material.icons.filled.Pause
 
 @Composable
 fun ControlScreen(
     sysInfo: SysInfo?,
     volume: Volume,
+    mediaState: MediaState,
     onMedia: (String) -> Unit,
     onVolume: (Int) -> Unit,
     onMute: () -> Unit,
@@ -63,7 +66,7 @@ fun ControlScreen(
         }
 
         SysInfoCard(sysInfo)
-        MediaCard(onMedia)
+        MediaCard(mediaState, onMedia)
         VolumeCard(volume, onVolume, onMute)
         PowerCard(onPower)
     }
@@ -92,12 +95,68 @@ private fun SysInfoCard(s: SysInfo?) = SectionCard("System") {
 }
 
 @Composable
-private fun MediaCard(onMedia: (String) -> Unit) = SectionCard("Media") {
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-        FilledIconButton(onClick = { onMedia("previous") }, modifier = Modifier.weight(1f)) { Icon(Icons.Filled.FastRewind, "Previous") }
-        FilledIconButton(onClick = { onMedia("play_pause") }, modifier = Modifier.weight(1f)) { Icon(Icons.Filled.PlayArrow, "Play/Pause") }
-        FilledIconButton(onClick = { onMedia("next") }, modifier = Modifier.weight(1f)) { Icon(Icons.Filled.FastForward, "Next") }
-        FilledIconButton(onClick = { onMedia("stop") }, modifier = Modifier.weight(1f)) { Icon(Icons.Filled.Stop, "Stop") }
+private fun MediaCard(mediaState: MediaState, onMedia: (String) -> Unit) = SectionCard("Media") {
+    Column(
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        if (mediaState.title.isNotBlank()) {
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                Text(
+                    text = mediaState.title,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                if (mediaState.artist.isNotBlank() || mediaState.albumTitle.isNotBlank()) {
+                    val subtitle = listOfNotNull(
+                        mediaState.artist.takeIf { it.isNotBlank() },
+                        mediaState.albumTitle.takeIf { it.isNotBlank() }
+                    ).joinToString("  •  ")
+                    Text(
+                        text = subtitle,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+        } else {
+            Text(
+                text = "No active media session",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+
+        Spacer(Modifier.height(4.dp))
+
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            FilledIconButton(onClick = { onMedia("previous") }, modifier = Modifier.weight(1f)) {
+                Icon(Icons.Filled.FastRewind, "Previous")
+            }
+            
+            val isPlaying = mediaState.status.equals("Playing", ignoreCase = true)
+            FilledIconButton(onClick = { onMedia("play_pause") }, modifier = Modifier.weight(1f)) {
+                Icon(
+                    imageVector = if (isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
+                    contentDescription = if (isPlaying) "Pause" else "Play"
+                )
+            }
+            
+            FilledIconButton(onClick = { onMedia("next") }, modifier = Modifier.weight(1f)) {
+                Icon(Icons.Filled.FastForward, "Next")
+            }
+            
+            FilledIconButton(onClick = { onMedia("stop") }, modifier = Modifier.weight(1f)) {
+                Icon(Icons.Filled.Stop, "Stop")
+            }
+        }
     }
 }
 

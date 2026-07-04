@@ -35,6 +35,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.pulselink.net.ConnState
+import com.pulselink.net.MediaState
 import com.pulselink.ui.ConnectScreen
 import com.pulselink.ui.ConnectingScreen
 import com.pulselink.ui.ControlScreen
@@ -52,6 +53,7 @@ class MainActivity : ComponentActivity() {
                     val state by vm.state.collectAsState()
                     val sysInfo by vm.sysInfo.collectAsState()
                     val volume by vm.volume.collectAsState()
+                    val mediaState by vm.mediaState.collectAsState()
                     val error by vm.error.collectAsState()
 
                     var tab by rememberSaveable { mutableIntStateOf(0) }
@@ -87,7 +89,7 @@ class MainActivity : ComponentActivity() {
                                 0 -> {
                                     if (state == ConnState.Ready) {
                                         ControlScreen(
-                                            sysInfo = sysInfo, volume = volume,
+                                            sysInfo = sysInfo, volume = volume, mediaState = mediaState,
                                             onMedia = vm.client::media,
                                             onVolume = vm.client::setVolume,
                                             onMute = vm.client::toggleMute,
