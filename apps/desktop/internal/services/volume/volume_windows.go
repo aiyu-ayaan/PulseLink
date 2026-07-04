@@ -5,6 +5,7 @@ package volume
 import (
 	"math"
 	"runtime"
+	"unsafe"
 
 	"github.com/go-ole/go-ole"
 	"github.com/moutend/go-wca/pkg/wca"
@@ -45,6 +46,9 @@ func withEndpointVolume(fn func(*wca.IAudioEndpointVolume) error) error {
 	return fn(aev)
 }
 
+// Declare assembly function to invoke SetMasterVolumeLevelScalar with floating-point parameters mapped to XMM registers (Windows AMD64).
+func callSetVolumeScalar(fn uintptr, aev uintptr, level float32, eventContextGUID uintptr) uintptr
+
 // readState reads the current scalar level (0-1) and mute flag.
 func readState(aev *wca.IAudioEndpointVolume) (VolumeState, error) {
 	var scalar float32
@@ -55,6 +59,7 @@ func readState(aev *wca.IAudioEndpointVolume) (VolumeState, error) {
 	if err := aev.GetMute(&muted); err != nil {
 		return VolumeState{}, err
 	}
+	println("DEBUG: readState scalar =", scalar)
 	return VolumeState{Level: int(math.Round(float64(scalar) * 100)), Muted: muted}, nil
 }
 
@@ -76,42 +81,100 @@ func (s *Service) SetVolume(level int) (VolumeState, error) {
 		level = 100
 	}
 	s.log.Info("volume action: set", "level", level)
-	var st VolumeState
-	err := withEndpointVolume(func(aev *wca.IAudioEndpointVolume) error {
-		if e := aev.SetMasterVolumeLevelScalar(float32(level)/100, nil); e != nil {
-			return e
-		}
-		var e error
-		st, e = readState(aev)
-		return e
-	})
-	return st, err
+
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+
+	if err := ole.CoInitializeEx(0, ole.COINIT_APARTMENTTHREADED); err != nil {
+		return VolumeState{}, err
+	}
+	defer ole.CoUninitialize()
+
+	var mmde *wca.IMMDeviceEnumerator
+	if err := wca.CoCreateInstance(wca.CLSID_MMDeviceEnumerator, 0, wca.CLSCTX_ALL, wca.IID_IMMDeviceEnumerator, &mmde); err != nil {
+		return VolumeState{}, err
+	}
+	defer mmde.Release()
+
+	var mmd *wca.IMMDevice
+	if err := mmde.GetDefaultAudioEndpoint(wca.ERender, wca.EConsole, &mmd); err != nil {
+		return VolumeState{}, err
+	}
+	defer mmd.Release()
+
+	var aev *wca.IAudioEndpointVolume
+	if err := mmd.Activate(wca.IID_IAudioEndpointVolume, wca.CLSCTX_ALL, nil, &aev); err != nil {
+		return VolumeState{}, err
+	}
+	defer aev.Release()
+
+	targetScalar := float32(level)/100
+	fnPtr := aev.VTable().SetMasterVolumeLevelScalar
+	println("SERVICE SETVOLUME - fnPtr =", fnPtr, "aev =", uintptr(unsafe.Pointer(aev)), "targetScalar =", targetScalar, "bits =", math.Float32bits(targetScalar))
+	hr := callSetVolumeScalar(
+		fnPtr,
+		uintptr(unsafe.Pointer(aev)),
+		targetScalar,
+		0,
+	)
+	if hr != 0 {
+		return VolumeState{}, ole.NewError(hr)
+	}
+
+	return readState(aev)
 }
 
 // step nudges the current scalar by delta, clamped to [0,1], and returns the
 // resulting state. Used by up/down so the exact new level is reported back.
 func (s *Service) step(delta float32) (VolumeState, error) {
-	var st VolumeState
-	err := withEndpointVolume(func(aev *wca.IAudioEndpointVolume) error {
-		var cur float32
-		if e := aev.GetMasterVolumeLevelScalar(&cur); e != nil {
-			return e
-		}
-		next := cur + delta
-		if next < 0 {
-			next = 0
-		}
-		if next > 1 {
-			next = 1
-		}
-		if e := aev.SetMasterVolumeLevelScalar(next, nil); e != nil {
-			return e
-		}
-		var e error
-		st, e = readState(aev)
-		return e
-	})
-	return st, err
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+
+	if err := ole.CoInitializeEx(0, ole.COINIT_APARTMENTTHREADED); err != nil {
+		return VolumeState{}, err
+	}
+	defer ole.CoUninitialize()
+
+	var mmde *wca.IMMDeviceEnumerator
+	if err := wca.CoCreateInstance(wca.CLSID_MMDeviceEnumerator, 0, wca.CLSCTX_ALL, wca.IID_IMMDeviceEnumerator, &mmde); err != nil {
+		return VolumeState{}, err
+	}
+	defer mmde.Release()
+
+	var mmd *wca.IMMDevice
+	if err := mmde.GetDefaultAudioEndpoint(wca.ERender, wca.EConsole, &mmd); err != nil {
+		return VolumeState{}, err
+	}
+	defer mmd.Release()
+
+	var aev *wca.IAudioEndpointVolume
+	if err := mmd.Activate(wca.IID_IAudioEndpointVolume, wca.CLSCTX_ALL, nil, &aev); err != nil {
+		return VolumeState{}, err
+	}
+	defer aev.Release()
+
+	var cur float32
+	if e := aev.GetMasterVolumeLevelScalar(&cur); e != nil {
+		return VolumeState{}, e
+	}
+	next := cur + delta
+	if next < 0 {
+		next = 0
+	}
+	if next > 1 {
+		next = 1
+	}
+	hr := callSetVolumeScalar(
+		aev.VTable().SetMasterVolumeLevelScalar,
+		uintptr(unsafe.Pointer(aev)),
+		next,
+		0,
+	)
+	if hr != 0 {
+		return VolumeState{}, ole.NewError(hr)
+	}
+
+	return readState(aev)
 }
 
 func (s *Service) VolumeUp() (VolumeState, error) {
