@@ -63,6 +63,22 @@ func (a *Authenticator) Authenticate(hello protocol.ClientHello) (transport.Auth
 		return transport.AuthResult{}, err
 	}
 
+	if hello.Token != "" && hello.Token != "desktop-local" {
+		pairing, err := a.store.Pairings.Get(hello.Token)
+		if err != nil {
+			if errors.Is(err, storage.ErrNotFound) {
+				return transport.AuthResult{Accepted: false, Reason: "invalid pairing token"}, nil
+			}
+			return transport.AuthResult{}, err
+		}
+		if pairing.Used {
+			return transport.AuthResult{Accepted: false, Reason: "pairing token already used"}, nil
+		}
+		if time.Now().After(pairing.ExpiresAt) {
+			return transport.AuthResult{Accepted: false, Reason: "pairing token expired"}, nil
+		}
+	}
+
 	publicKey := hello.Token
 	if publicKey == "" {
 		publicKey = "manual-pairing"

@@ -2,6 +2,7 @@ package auth
 
 import (
 	"testing"
+	"time"
 
 	"github.com/aiyu-ayaan/pulselink/apps/desktop/internal/eventbus"
 	"github.com/aiyu-ayaan/pulselink/apps/desktop/internal/protocol"
@@ -84,5 +85,59 @@ func TestTrustedAndroidDeviceGetsFullNegotiation(t *testing.T) {
 	}
 	if res.AllowedCapabilities != nil {
 		t.Fatalf("trusted device should not be narrowed by auth, got %v", res.AllowedCapabilities)
+	}
+}
+
+func TestUnknownDeviceWithValidPairingTokenRequestsPairing(t *testing.T) {
+	store := newTestStore(t)
+	bus := eventbus.New()
+	auth := New(store, bus)
+	now := time.Now()
+
+	if err := store.Pairings.Create(storage.Pairing{
+		Token:     "valid-token",
+		CreatedAt: now,
+		ExpiresAt: now.Add(time.Minute),
+	}); err != nil {
+		t.Fatalf("seed pairing token: %v", err)
+	}
+
+	res, err := auth.Authenticate(protocol.ClientHello{
+		DeviceID:     "android-pixel",
+		DeviceName:   "Pixel",
+		Token:        "valid-token",
+		Capabilities: []string{"pairing", "volume"},
+	})
+	if err != nil {
+		t.Fatalf("authenticate: %v", err)
+	}
+	if !res.Accepted {
+		t.Fatalf("expected valid token to be accepted pending approval: %s", res.Reason)
+	}
+
+	pairing, err := store.Pairings.Get("valid-token")
+	if err != nil {
+		t.Fatalf("get pairing token: %v", err)
+	}
+	if !pairing.Used || pairing.DeviceID != "android-pixel" {
+		t.Fatalf("token should be marked used by device, got %+v", pairing)
+	}
+}
+
+func TestUnknownDeviceRejectsInvalidPairingToken(t *testing.T) {
+	store := newTestStore(t)
+	auth := New(store, eventbus.New())
+
+	res, err := auth.Authenticate(protocol.ClientHello{
+		DeviceID:     "android-pixel",
+		DeviceName:   "Pixel",
+		Token:        "not-real",
+		Capabilities: []string{"pairing", "volume"},
+	})
+	if err != nil {
+		t.Fatalf("authenticate: %v", err)
+	}
+	if res.Accepted || res.Reason != "invalid pairing token" {
+		t.Fatalf("expected invalid token rejection, got %+v", res)
 	}
 }

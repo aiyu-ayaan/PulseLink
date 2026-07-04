@@ -232,7 +232,7 @@ func (a *App) registerServices() {
 	a.registry.Register(devicesSvc)
 	a.router.Register(devicesSvc.Name(), devicesSvc)
 
-	pairingSvc := pairing.New(a.log, a.bus, a.store, a.hub)
+	pairingSvc := pairing.New(a.log, a.bus, a.store, a.hub, a.cfg)
 	a.registry.Register(pairingSvc)
 	a.router.Register(pairingSvc.Name(), pairingSvc)
 

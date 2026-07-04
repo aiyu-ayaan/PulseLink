@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/aiyu-ayaan/pulselink/apps/desktop/internal/config"
 	"github.com/aiyu-ayaan/pulselink/apps/desktop/internal/eventbus"
 	"github.com/aiyu-ayaan/pulselink/apps/desktop/internal/protocol"
 	"github.com/aiyu-ayaan/pulselink/apps/desktop/internal/storage"
@@ -25,7 +26,7 @@ func newTestStore(t *testing.T) *storage.Store {
 func TestAcceptMarksPendingDeviceTrusted(t *testing.T) {
 	store := newTestStore(t)
 	bus := eventbus.New()
-	svc := New(slog.Default(), bus, store, transport.NewHub())
+	svc := New(slog.Default(), bus, store, transport.NewHub(), config.Default())
 
 	if err := store.Devices.Upsert(storage.Device{
 		ID:           "android-pixel",
@@ -66,7 +67,7 @@ func TestAcceptMarksPendingDeviceTrusted(t *testing.T) {
 
 func TestAcceptRejectsMissingDeviceID(t *testing.T) {
 	store := newTestStore(t)
-	svc := New(slog.Default(), eventbus.New(), store, transport.NewHub())
+	svc := New(slog.Default(), eventbus.New(), store, transport.NewHub(), config.Default())
 
 	req, err := protocol.NewRequest("accept-1", "pairing", "accept", DeviceActionPayload{})
 	if err != nil {
@@ -80,7 +81,7 @@ func TestAcceptRejectsMissingDeviceID(t *testing.T) {
 
 func TestAcceptRejectsUnknownDevice(t *testing.T) {
 	store := newTestStore(t)
-	svc := New(slog.Default(), eventbus.New(), store, transport.NewHub())
+	svc := New(slog.Default(), eventbus.New(), store, transport.NewHub(), config.Default())
 
 	req, err := protocol.NewRequest("accept-1", "pairing", "accept", DeviceActionPayload{DeviceID: "missing"})
 	if err != nil {
@@ -89,5 +90,36 @@ func TestAcceptRejectsUnknownDevice(t *testing.T) {
 	_, err = svc.Handle(context.Background(), req)
 	if pe, ok := err.(*protocol.Error); !ok || pe.Code != protocol.CodeNotFound {
 		t.Fatalf("want not_found, got %v", err)
+	}
+}
+
+func TestInfoCreatesPairingTokenAndURI(t *testing.T) {
+	store := newTestStore(t)
+	cfg := config.Default()
+	cfg.Server.Host = "192.168.1.103"
+	cfg.Server.Port = 9843
+	cfg.DeviceName = "PulseLink-PC"
+	svc := New(slog.Default(), eventbus.New(), store, transport.NewHub(), cfg)
+
+	req, err := protocol.NewRequest("info-1", "pairing", "info", nil)
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	out, err := svc.Handle(context.Background(), req)
+	if err != nil {
+		t.Fatalf("info: %v", err)
+	}
+	info, ok := out.(Info)
+	if !ok {
+		t.Fatalf("unexpected info payload: %T", out)
+	}
+	if info.Host != "192.168.1.103" || info.Port != 9843 || info.Scheme != "ws" {
+		t.Fatalf("unexpected connection info: %+v", info)
+	}
+	if info.Token == "" || info.URI == "" {
+		t.Fatalf("expected token and uri: %+v", info)
+	}
+	if _, err := store.Pairings.Get(info.Token); err != nil {
+		t.Fatalf("token should be stored: %v", err)
 	}
 }
