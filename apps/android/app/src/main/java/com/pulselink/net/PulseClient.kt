@@ -107,6 +107,7 @@ class PulseClient(private val scope: CoroutineScope) {
                 }
                 _state.value = ConnState.Disconnected
             } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
                 if (scope.isActive) _error.value =
                     "Cannot reach $host:$port — is PulseLink running on the PC?"
                 _state.value = ConnState.Disconnected
