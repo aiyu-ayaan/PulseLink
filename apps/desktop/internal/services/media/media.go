@@ -63,8 +63,18 @@ func (s *Service) Handle(ctx context.Context, req protocol.Envelope) (any, error
 		return nil, err
 	}
 
-	// Wait a moment for OS/players to update their GSMTC state
-	time.Sleep(500 * time.Millisecond)
-	return s.GetMediaState()
+	// Fetch and broadcast the updated media state asynchronously
+	go func() {
+		time.Sleep(500 * time.Millisecond)
+		state, err := s.GetMediaState()
+		if err == nil {
+			s.bus.Publish(eventbus.Event{
+				Topic:   "media.changed",
+				Payload: state,
+			})
+		}
+	}()
+
+	return nil, nil
 }
 

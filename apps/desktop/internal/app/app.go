@@ -131,6 +131,18 @@ func New(cfgPath string) (*App, error) {
 		}
 	})
 
+	// Forward media changes from the eventbus to connected devices.
+	bus.Subscribe("media.changed", func(ev eventbus.Event) {
+		payload, ok := ev.Payload.(media.MediaState)
+		if !ok {
+			return
+		}
+		env, err := protocol.NewEvent("media", "changed", payload)
+		if err == nil {
+			hub.Broadcast(env)
+		}
+	})
+
 	// Forward pairing requests from the eventbus to connected devices.
 	bus.Subscribe("pairing.request", func(ev eventbus.Event) {
 		payload, ok := ev.Payload.(transport.DeviceInfo)

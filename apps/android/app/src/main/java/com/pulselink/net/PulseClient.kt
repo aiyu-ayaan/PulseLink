@@ -174,7 +174,20 @@ class PulseClient(private val scope: CoroutineScope) {
         scope.launch(Dispatchers.IO) { runCatching { s.send(request(capability, action, payload)) } }
     }
 
-    fun media(action: String) = send("media", action)
+    fun media(action: String) {
+        val current = _mediaState.value
+        when (action) {
+            "play_pause" -> {
+                val isPlaying = current.status.equals("Playing", ignoreCase = true)
+                val nextStatus = if (isPlaying) "Paused" else "Playing"
+                _mediaState.value = current.copy(status = nextStatus)
+            }
+            "stop" -> {
+                _mediaState.value = current.copy(status = "Stopped")
+            }
+        }
+        send("media", action)
+    }
     fun power(action: String) = send("power", action)
     fun setVolume(level: Int) = send("volume", "set", buildJsonObject { put("level", level) })
     fun volumeUp() = send("volume", "up")
