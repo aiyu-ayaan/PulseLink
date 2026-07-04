@@ -69,6 +69,30 @@ func (h *Hub) ConnectedDevices() []string {
 	return out
 }
 
+type DeviceInfo struct {
+	ID           string   `json:"id"`
+	Name         string   `json:"name"`
+	Capabilities []string `json:"capabilities"`
+}
+
+// ConnectedDevicesInfo returns details of all active companion connections.
+func (h *Hub) ConnectedDevicesInfo() []DeviceInfo {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	out := make([]DeviceInfo, 0, len(h.byDevice))
+	for _, client := range h.byDevice {
+		if client.DeviceID == "desktop-ui" {
+			continue
+		}
+		out = append(out, DeviceInfo{
+			ID:           client.DeviceID,
+			Name:         client.DeviceName,
+			Capabilities: client.Capabilities,
+		})
+	}
+	return out
+}
+
 // Count returns the number of live connections.
 func (h *Hub) Count() int {
 	h.mu.RLock()
@@ -85,6 +109,19 @@ func (h *Hub) SendToDevice(deviceID string, env protocol.Envelope) bool {
 		return false
 	}
 	return c.Send(env)
+}
+
+// DisconnectDevice closes the connection of the given deviceID.
+func (h *Hub) DisconnectDevice(deviceID string) {
+	h.mu.Lock()
+	c, ok := h.byDevice[deviceID]
+	if ok {
+		c.Close()
+		delete(h.byClient, c.ID)
+		delete(h.byDevice, deviceID)
+	}
+	h.mu.Unlock()
+	h.notify()
 }
 
 // Broadcast queues env for every connected client.
