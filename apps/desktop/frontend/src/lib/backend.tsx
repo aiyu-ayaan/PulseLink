@@ -50,12 +50,6 @@ export interface ClipEvent {
   source: 'pc' | 'you'
 }
 
-export interface PairingToast {
-  show: boolean
-  deviceName: string
-  deviceId: string
-}
-
 interface BackendState {
   status: Status
   error: string | null
@@ -71,8 +65,6 @@ interface BackendState {
   theme: 'dark' | 'light'
   devices: DeviceInfo[]
   pairingRequests: DeviceInfo[]
-  pairingToast: PairingToast
-  dismissPairingToast: () => void
   setHost: (v: string) => void
   setPort: (v: string) => void
   connect: () => void
@@ -116,11 +108,15 @@ export function BackendProvider({ children }: { children: ReactNode }) {
   const [theme, setTheme] = useState<'dark' | 'light'>('dark')
   const [devices, setDevices] = useState<DeviceInfo[]>([])
   const [pairingRequests, setPairingRequests] = useState<DeviceInfo[]>([])
-  const [pairingToast, setPairingToast] = useState<PairingToast>({ show: false, deviceName: '', deviceId: '' })
 
   const wsRef = useRef<WebSocket | null>(null)
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const pairingPollRef = useRef<ReturnType<typeof setInterval> | null>(null)
+
+  // Use refs for the message handler so WebSocket callbacks always see the
+  // latest state setters without recreating the WebSocket connection.
+  const handleMessageRef = useRef<(env: Envelope) => void>(() => {})
+  const sendRef = useRef<(capability: string, action: string, payload?: any) => void>(() => {})
 
   const log = useCallback((msg: string) => {
     const ts = new Date().toLocaleTimeString()
@@ -131,6 +127,7 @@ export function BackendProvider({ children }: { children: ReactNode }) {
     document.documentElement.setAttribute('data-theme', theme)
   }, [theme])
 
+  // Stable send function that closes over the ref
   const send = useCallback(
     (capability: string, action: string, payload: any = null) => {
       const ws = wsRef.current
@@ -151,8 +148,13 @@ export function BackendProvider({ children }: { children: ReactNode }) {
     [log],
   )
 
-  const handleMessage = useCallback(
-    (env: Envelope) => {
+  // Keep sendRef up-to-date
+  useEffect(() => { sendRef.current = send }, [send])
+
+  // Update the message handler ref whenever deps change — this avoids
+  // recreating the WebSocket every time handleMessage's identity changes.
+  useEffect(() => {
+    handleMessageRef.current = (env: Envelope) => {
       if (env.capability === 'handshake' && env.action === 'welcome') {
         if (env.payload?.accepted) {
           setStatus('ready')
@@ -202,7 +204,6 @@ export function BackendProvider({ children }: { children: ReactNode }) {
                 if (prev.some((r) => r.id === env.payload.id)) return prev
                 return [...prev, env.payload]
               })
-              setPairingToast({ show: true, deviceName: env.payload.name, deviceId: env.payload.id })
             }
           } else if (env.action === 'pending') {
             if (env.payload?.devices) {
@@ -229,16 +230,24 @@ export function BackendProvider({ children }: { children: ReactNode }) {
           }
           break
       }
-    },
-    [log, send],
-  )
+    }
+  }, [log, send])
+
+  // Stable connect that never changes identity — avoids re-creating the
+  // WebSocket on every render. Reads host/port from refs.
+  const hostRef = useRef(host)
+  const portRef = useRef(port)
+  useEffect(() => { hostRef.current = host }, [host])
+  useEffect(() => { portRef.current = port }, [port])
 
   const connect = useCallback(() => {
     if (wsRef.current) wsRef.current.close()
     setStatus('connecting')
     setError(null)
+    const h = hostRef.current
+    const p = portRef.current
     const scheme = window.location.protocol === 'https:' ? 'wss' : 'ws'
-    const url = `${scheme}://${host}:${port}/ws`
+    const url = `${scheme}://${h}:${p}/ws`
     log(`connecting ${url}`)
     try {
       const ws = new WebSocket(url)
@@ -264,12 +273,12 @@ export function BackendProvider({ children }: { children: ReactNode }) {
       }
       ws.onmessage = (e) => {
         try {
-          handleMessage(JSON.parse(e.data))
+          handleMessageRef.current(JSON.parse(e.data))
         } catch (err: any) {
           log(`parse error: ${err.message}`)
         }
       }
-      ws.onerror = () => setError(`Connection error. Is the backend running on ${host}:${port}?`)
+      ws.onerror = () => setError(`Connection error. Is the backend running on ${h}:${p}?`)
       ws.onclose = () => {
         setStatus('disconnected')
         if (pollRef.current) clearInterval(pollRef.current)
@@ -279,7 +288,7 @@ export function BackendProvider({ children }: { children: ReactNode }) {
       setStatus('disconnected')
       setError(err.message)
     }
-  }, [host, port, handleMessage, log])
+  }, [log])
 
   useEffect(() => {
     connect()
@@ -288,7 +297,7 @@ export function BackendProvider({ children }: { children: ReactNode }) {
       if (pollRef.current) clearInterval(pollRef.current)
       if (pairingPollRef.current) clearInterval(pairingPollRef.current)
     }
-    // connect() intentionally re-created only on host/port change; auto-connect once.
+    // connect() is now stable; auto-connect once on mount.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -301,10 +310,6 @@ export function BackendProvider({ children }: { children: ReactNode }) {
     send('pairing', 'reject', { deviceId })
     setPairingRequests((prev) => prev.filter((r) => r.id !== deviceId))
   }, [send])
-
-  const dismissPairingToast = useCallback(() => {
-    setPairingToast({ show: false, deviceName: '', deviceId: '' })
-  }, [])
 
   const value: BackendState = {
     status,
@@ -321,8 +326,6 @@ export function BackendProvider({ children }: { children: ReactNode }) {
     theme,
     devices,
     pairingRequests,
-    pairingToast,
-    dismissPairingToast,
     setHost,
     setPort,
     connect,

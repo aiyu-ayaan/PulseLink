@@ -61,7 +61,8 @@ export function Sidebar({
               <Icon size={18} strokeWidth={isActive ? 2.2 : 1.8} />
               <span>{item.label}</span>
               {showBadge && (
-                <span className="ml-auto flex h-5 min-w-[20px] items-center justify-center rounded-full bg-accent px-1.5 text-[11px] font-bold text-on-accent">
+                <span className="relative ml-auto flex h-5 min-w-[20px] items-center justify-center rounded-full bg-accent px-1.5 text-[11px] font-bold text-on-accent">
+                  <span className="absolute inset-0 animate-ping rounded-full bg-accent opacity-40" />
                   {pendingCount}
                 </span>
               )}

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import QRCode from 'qrcode'
-import { Smartphone, Copy, Check } from 'lucide-react'
+import { Smartphone, Copy, Check, Shield, ShieldCheck, Wifi } from 'lucide-react'
 import { useBackend } from '../lib/backend'
 import { Card, CardHeader, Field, inputCls } from '../components/ui'
 
@@ -10,7 +10,7 @@ import { Card, CardHeader, Field, inputCls } from '../components/ui'
 const DEV_TOKEN = 'desktop-local'
 
 export function Devices() {
-  const { config, host, devices, pairingRequests, acceptPairing, rejectPairing } = useBackend()
+  const { config, host, devices, pairingRequests } = useBackend()
   const [pairHost, setPairHost] = useState(host)
   const [pairPort, setPairPort] = useState(String(config.server.port || 9843))
   const [qr, setQr] = useState('')
@@ -39,41 +39,27 @@ export function Devices() {
     setTimeout(() => setCopied(false), 1500)
   }
 
+  // Separate trusted (paired) devices from untrusted (pending) ones in the
+  // connected list. Pending devices show "pairing" as their only capability.
+  const trustedDevices = devices.filter(
+    (d) => !(d.capabilities.length === 1 && d.capabilities[0] === 'pairing'),
+  )
+  const pendingDevices = devices.filter(
+    (d) => d.capabilities.length === 1 && d.capabilities[0] === 'pairing',
+  )
+
   return (
     <div className="space-y-5">
+      {/* Pending pairing info banner — non-interactive, the global dialog handles accept/reject */}
       {pairingRequests.length > 0 && (
-        <Card className="border-accent bg-accent-soft p-5 animate-in fade-in slide-in-from-top-4 duration-250">
-          <CardHeader title="Pairing requests" subtitle="New devices requesting to control this PC" />
-          <div className="mt-3 divide-y divide-stroke/30">
-            {pairingRequests.map((req) => (
-              <div key={req.id} className="flex items-center justify-between py-3 first:pt-0 last:pb-0">
-                <div className="flex items-center gap-3">
-                  <div className="grid h-10 w-10 place-items-center rounded-lg bg-card text-accent">
-                    <Smartphone size={20} />
-                  </div>
-                  <div>
-                    <h4 className="text-sm font-semibold text-text">{req.name}</h4>
-                    <p className="text-xs text-text-tertiary font-mono break-all">{req.id}</p>
-                  </div>
-                </div>
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => acceptPairing(req.id)}
-                    className="rounded bg-accent px-3 py-1.5 text-xs font-semibold text-on-accent transition-colors hover:bg-accent-hover cursor-pointer"
-                  >
-                    Accept
-                  </button>
-                  <button
-                    onClick={() => rejectPairing(req.id)}
-                    className="rounded border border-stroke bg-control px-3 py-1.5 text-xs font-semibold text-text-secondary transition-colors hover:bg-control-hover cursor-pointer"
-                  >
-                    Reject
-                  </button>
-                </div>
-              </div>
-            ))}
-          </div>
-        </Card>
+        <div className="flex items-center gap-3 rounded-lg border border-accent/30 bg-accent-soft px-4 py-3 animate-in fade-in slide-in-from-top-2 duration-200">
+          <Shield size={18} className="text-accent shrink-0" />
+          <p className="text-sm text-text-secondary">
+            <span className="font-semibold text-accent">{pairingRequests.length}</span>{' '}
+            device{pairingRequests.length > 1 ? 's' : ''} waiting for approval.
+            A dialog will appear to accept or reject each request.
+          </p>
+        </div>
       )}
 
       <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
@@ -123,17 +109,18 @@ export function Devices() {
 
       <Card className="p-6">
         <CardHeader title="Connected Devices" subtitle="Companion devices currently connected and active" />
-        {devices.length === 0 ? (
+        {trustedDevices.length === 0 && pendingDevices.length === 0 ? (
           <div className="py-8 text-center text-sm text-text-tertiary">
             No devices connected. Scan the QR code or use the pairing URI above to connect.
           </div>
         ) : (
           <div className="divide-y divide-stroke">
-            {devices.map((dev) => (
+            {/* Trusted / fully paired devices */}
+            {trustedDevices.map((dev) => (
               <div key={dev.id} className="flex items-center justify-between py-3 first:pt-0 last:pb-0">
                 <div className="flex items-center gap-3">
-                  <div className="grid h-10 w-10 place-items-center rounded-lg bg-control text-accent">
-                    <Smartphone size={20} />
+                  <div className="grid h-10 w-10 place-items-center rounded-lg bg-control text-ok">
+                    <ShieldCheck size={20} />
                   </div>
                   <div>
                     <h4 className="text-sm font-semibold text-text">{dev.name}</h4>
@@ -147,6 +134,24 @@ export function Devices() {
                     </span>
                   ))}
                 </div>
+              </div>
+            ))}
+
+            {/* Pending / untrusted devices */}
+            {pendingDevices.map((dev) => (
+              <div key={dev.id} className="flex items-center justify-between py-3 first:pt-0 last:pb-0 opacity-60">
+                <div className="flex items-center gap-3">
+                  <div className="grid h-10 w-10 place-items-center rounded-lg bg-control text-warn">
+                    <Wifi size={20} />
+                  </div>
+                  <div>
+                    <h4 className="text-sm font-semibold text-text">{dev.name}</h4>
+                    <p className="text-xs text-text-tertiary font-mono break-all">{dev.id}</p>
+                  </div>
+                </div>
+                <span className="rounded bg-warn/20 px-2 py-0.5 text-[10px] font-semibold text-warn">
+                  Pending approval
+                </span>
               </div>
             ))}
           </div>
