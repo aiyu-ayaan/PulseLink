@@ -1,1 +1,21 @@
-// Placeholder
+{
+  "$schema": "https://wails.io/schemas/config.v3.json",
+  "version": "3",
+  "name": "PulseLink",
+  "outputfilename": "pulselink",
+  "info": {
+    "productName": "PulseLink",
+    "description": "Control your Windows PC from your phone",
+    "companyName": "PulseLink"
+  },
+  "frontend": {
+    "dir": "apps/desktop/frontend",
+    "install": "npm install",
+    "build": "npm run build",
+    "dist": "apps/desktop/frontend/dist"
+  },
+  "backend": {
+    "entrypoint": "apps/desktop",
+    "buildtags": "wails"
+  }
+}
