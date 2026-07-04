@@ -35,7 +35,7 @@ class PulseClient(private val scope: CoroutineScope) {
         install(HttpTimeout) {
             connectTimeoutMillis = 5000L
             requestTimeoutMillis = 5000L
-            socketTimeoutMillis = 5000L
+            socketTimeoutMillis = PAIRING_TIMEOUT_MS + 15_000L
         }
         engine {
             https {

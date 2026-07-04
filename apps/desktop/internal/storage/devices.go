@@ -104,8 +104,18 @@ func (r *DeviceRepo) Delete(id string) error {
 
 // SetTrusted updates only the trusted flag.
 func (r *DeviceRepo) SetTrusted(id string, trusted bool) error {
-	_, err := r.db.Exec(`UPDATE devices SET trusted=? WHERE id=?`, boolToInt(trusted), id)
-	return err
+	res, err := r.db.Exec(`UPDATE devices SET trusted=? WHERE id=?`, boolToInt(trusted), id)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 // TouchLastSeen records that the device was seen at t.
@@ -137,9 +147,9 @@ type scanner interface{ Scan(...any) error }
 
 func scanDevice(s scanner) (Device, error) {
 	var (
-		d               Device
-		trusted         int
-		pairedAt, seen  int64
+		d              Device
+		trusted        int
+		pairedAt, seen int64
 	)
 	if err := s.Scan(&d.ID, &d.Name, &d.PublicKey, &trusted, &pairedAt, &seen); err != nil {
 		return Device{}, err

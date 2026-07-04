@@ -2,7 +2,9 @@ package pairing
 
 import (
 	"context"
+	"errors"
 	"log/slog"
+	"strings"
 
 	"github.com/aiyu-ayaan/pulselink/apps/desktop/internal/eventbus"
 	"github.com/aiyu-ayaan/pulselink/apps/desktop/internal/protocol"
@@ -90,9 +92,16 @@ func (s *Service) Handle(ctx context.Context, req protocol.Envelope) (any, error
 		if err := req.Bind(&payload); err != nil {
 			return nil, &protocol.Error{Code: protocol.CodeBadRequest, Message: "malformed pairing payload"}
 		}
+		payload.DeviceID = strings.TrimSpace(payload.DeviceID)
+		if payload.DeviceID == "" {
+			return nil, &protocol.Error{Code: protocol.CodeBadRequest, Message: "deviceId is required"}
+		}
 
 		s.log.Info("pairing accepted", "device", payload.DeviceID)
 		if err := s.store.Devices.SetTrusted(payload.DeviceID, true); err != nil {
+			if errors.Is(err, storage.ErrNotFound) {
+				return nil, &protocol.Error{Code: protocol.CodeNotFound, Message: "pairing request not found"}
+			}
 			return nil, err
 		}
 
@@ -106,6 +115,10 @@ func (s *Service) Handle(ctx context.Context, req protocol.Envelope) (any, error
 		var payload DeviceActionPayload
 		if err := req.Bind(&payload); err != nil {
 			return nil, &protocol.Error{Code: protocol.CodeBadRequest, Message: "malformed pairing payload"}
+		}
+		payload.DeviceID = strings.TrimSpace(payload.DeviceID)
+		if payload.DeviceID == "" {
+			return nil, &protocol.Error{Code: protocol.CodeBadRequest, Message: "deviceId is required"}
 		}
 
 		s.log.Info("pairing rejected", "device", payload.DeviceID)
