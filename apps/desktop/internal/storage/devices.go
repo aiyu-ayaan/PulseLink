@@ -80,20 +80,31 @@ func (r *DeviceRepo) List() ([]Device, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	
 	var out []Device
-	for rows.Next() {
-		d, err := scanDevice(rows)
-		if err != nil {
-			return nil, err
+	err = func() error {
+		defer rows.Close()
+		for rows.Next() {
+			d, err := scanDevice(rows)
+			if err != nil {
+				return err
+			}
+			out = append(out, d)
 		}
-		d.Capabilities, err = r.capabilities(d.ID)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, d)
+		return rows.Err()
+	}()
+	if err != nil {
+		return nil, err
 	}
-	return out, rows.Err()
+
+	for i := range out {
+		caps, err := r.capabilities(out[i].ID)
+		if err != nil {
+			return nil, err
+		}
+		out[i].Capabilities = caps
+	}
+	return out, nil
 }
 
 // Delete removes a device and its capabilities (cascade).

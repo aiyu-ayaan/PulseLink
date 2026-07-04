@@ -1,5 +1,6 @@
 package com.pulselink.net
 
+import android.util.Log
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.cio.CIO
 import io.ktor.client.plugins.HttpTimeout
@@ -11,6 +12,7 @@ import io.ktor.websocket.close
 import io.ktor.websocket.readText
 import io.ktor.websocket.send
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -78,6 +80,7 @@ class PulseClient(private val scope: CoroutineScope) {
     }
 
     fun connect(host: String, port: Int, deviceName: String, token: String, preferredScheme: String = "ws") {
+        Log.d("PulseClient", "Connecting to $host:$port (device: $deviceName, scheme: $preferredScheme)...")
         this.lastHost = host
         this.lastPort = port
         this.lastDeviceName = deviceName
@@ -87,7 +90,7 @@ class PulseClient(private val scope: CoroutineScope) {
         disconnect()
         _state.value = ConnState.Connecting
         _error.value = null
-        pump = scope.launch {
+        pump = scope.launch(Dispatchers.IO) {
             try {
                 // Desktop MVP serves plain ws:// by default. Try that first so
                 // Android does not sit in a failed TLS attempt before pairing.
@@ -95,18 +98,26 @@ class PulseClient(private val scope: CoroutineScope) {
                 val secondScheme = if (firstScheme == "wss") "ws" else "wss"
                 val firstUrl = "$firstScheme://$host:$port/ws"
                 val secondUrl = "$secondScheme://$host:$port/ws"
+                Log.d("PulseClient", "Trying first connection attempt to $firstUrl")
                 var lastFailure: Throwable? = null
                 var sessionResult = runCatching {
                     withTimeout(CONNECT_ATTEMPT_TIMEOUT_MS) {
                         http.webSocketSession { url(firstUrl) }
                     }
-                }.onFailure { lastFailure = it }
+                }.onFailure {
+                    lastFailure = it
+                    Log.w("PulseClient", "First attempt to $firstUrl failed: ${it.message ?: it.toString()}")
+                }
                 if (sessionResult.isFailure) {
+                    Log.d("PulseClient", "Trying second connection attempt to $secondUrl")
                     sessionResult = runCatching {
                         withTimeout(CONNECT_ATTEMPT_TIMEOUT_MS) {
                             http.webSocketSession { url(secondUrl) }
                         }
-                    }.onFailure { lastFailure = it }
+                    }.onFailure {
+                        lastFailure = it
+                        Log.e("PulseClient", "Second attempt to $secondUrl failed: ${it.message ?: it.toString()}")
+                    }
                 }
 
                 val s = sessionResult.getOrElse {
@@ -117,17 +128,27 @@ class PulseClient(private val scope: CoroutineScope) {
                 }
                 session = s
                 _state.value = ConnState.Connected
+                Log.d("PulseClient", "Connected. Sending handshake hello.")
                 val hello = ClientHello(
                     deviceId = "android-$deviceName", deviceName = deviceName,
                     token = token, capabilities = CLIENT_CAPS,
                 )
                 s.send(request("handshake", "hello", json.encodeToJsonElement(hello) as JsonObject))
                 for (frame in s.incoming) {
-                    if (frame is Frame.Text) handle(frame.readText())
+                    if (frame is Frame.Text) {
+                        val text = frame.readText()
+                        Log.d("PulseClient", "Received frame text: $text")
+                        handle(text)
+                    }
                 }
+                Log.d("PulseClient", "Session incoming channel closed. Disconnecting.")
                 _state.value = ConnState.Disconnected
             } catch (e: Throwable) {
-                if (e is kotlinx.coroutines.CancellationException) throw e
+                if (e is kotlinx.coroutines.CancellationException) {
+                    Log.d("PulseClient", "Connection job cancelled.")
+                    throw e
+                }
+                Log.e("PulseClient", "Connection error in pump: ${e.message ?: e.toString()}", e)
                 if (scope.isActive) _error.value = e.message ?: e.toString()
                 _state.value = ConnState.Disconnected
             }
@@ -135,18 +156,19 @@ class PulseClient(private val scope: CoroutineScope) {
     }
 
     fun disconnect() {
+        Log.d("PulseClient", "Disconnecting: clearing session and cancelling coroutines...")
         pairingTimeout?.cancel(); pairingTimeout = null
         poll?.cancel(); poll = null
         pump?.cancel(); pump = null
         val s = session; session = null
-        scope.launch { runCatching { s?.close() } }
+        scope.launch(Dispatchers.IO) { runCatching { s?.close() } }
         _state.value = ConnState.Disconnected
     }
 
     // Fire-and-forget request. Payload may be null for no-arg actions.
     fun send(capability: String, action: String, payload: JsonObject? = null) {
         val s = session ?: return
-        scope.launch { runCatching { s.send(request(capability, action, payload)) } }
+        scope.launch(Dispatchers.IO) { runCatching { s.send(request(capability, action, payload)) } }
     }
 
     fun media(action: String) = send("media", action)
@@ -165,51 +187,72 @@ class PulseClient(private val scope: CoroutineScope) {
     }
 
     private fun handle(text: String) {
-        val env = runCatching { json.decodeFromString(Envelope.serializer(), text) }.getOrNull() ?: return
+        val env = runCatching { json.decodeFromString(Envelope.serializer(), text) }.getOrNull() ?: run {
+            Log.e("PulseClient", "Failed to decode envelope: $text")
+            return
+        }
+        Log.d("PulseClient", "Handling envelope - Type: ${env.type}, Capability: ${env.capability}, Action: ${env.action}")
         if (env.capability == "handshake" && env.action == "welcome") {
             val w = env.payload?.let { runCatching { json.decodeFromJsonElement(ServerWelcome.serializer(), it) }.getOrNull() }
+            Log.d("PulseClient", "Handshake response - Accepted: ${w?.accepted}, Capabilities: ${w?.capabilities}")
             if (w?.accepted == true) {
                 val hasFullAccess = w.capabilities.contains("sysinfo") || w.capabilities.contains("volume")
                 if (hasFullAccess) {
                     _state.value = ConnState.Ready
+                    Log.d("PulseClient", "Connection ready. Querying sysinfo and volume.")
                     send("sysinfo", "get"); send("volume", "get")
-                    poll = scope.launch {
+                    poll = scope.launch(Dispatchers.IO) {
                         while (isActive) { kotlinx.coroutines.delay(4000); send("sysinfo", "get") }
                     }
                 } else if (w.capabilities.contains("pairing")) {
                     _state.value = ConnState.PairingPending
+                    Log.d("PulseClient", "Pairing pending. Waiting for PC acceptance.")
                     pairingTimeout?.cancel()
-                    pairingTimeout = scope.launch {
+                    pairingTimeout = scope.launch(Dispatchers.IO) {
                         kotlinx.coroutines.delay(PAIRING_TIMEOUT_MS)
                         if (_state.value == ConnState.PairingPending) {
+                            Log.w("PulseClient", "Pairing attempt timed out.")
                             _error.value = "Pairing timed out after 60 seconds — no one accepted on the PC"
                             disconnect()
                         }
                     }
                 } else {
+                    Log.e("PulseClient", "Unauthorized: no capabilities negotiated")
                     _error.value = "Unauthorized: no capabilities negotiated"
                     _state.value = ConnState.Disconnected
                 }
             } else {
+                Log.e("PulseClient", "Handshake rejected by server: ${w?.reason ?: "unauthorized"}")
                 _error.value = "Handshake rejected: ${w?.reason ?: "unauthorized"}"
                 _state.value = ConnState.Disconnected
             }
             return
         }
-        if (env.error != null) { _error.value = env.error.message; return }
+        if (env.error != null) {
+            Log.e("PulseClient", "Received error in response: ${env.error.code} - ${env.error.message}")
+            _error.value = env.error.message
+            return
+        }
         when (env.capability) {
             "sysinfo" -> {
                 val p = env.payload ?: return
-                runCatching { json.decodeFromJsonElement(SysInfo.serializer(), p) }.getOrNull()?.let { _sysInfo.value = it }
+                runCatching { json.decodeFromJsonElement(SysInfo.serializer(), p) }.getOrNull()?.let {
+                    Log.d("PulseClient", "Updated sysinfo: $it")
+                    _sysInfo.value = it
+                }
             }
             "volume" -> {
                 val p = env.payload ?: return
-                runCatching { json.decodeFromJsonElement(Volume.serializer(), p) }.getOrNull()?.let { _volume.value = it }
+                runCatching { json.decodeFromJsonElement(Volume.serializer(), p) }.getOrNull()?.let {
+                    Log.d("PulseClient", "Updated volume: $it")
+                    _volume.value = it
+                }
             }
             "pairing" -> {
+                Log.d("PulseClient", "Pairing event action: ${env.action}")
                 if (env.action == "approved") {
                     pairingTimeout?.cancel(); pairingTimeout = null
-                    scope.launch {
+                    scope.launch(Dispatchers.IO) {
                         connect(lastHost, lastPort, lastDeviceName, lastToken, lastScheme)
                     }
                 } else if (env.action == "rejected") {

@@ -10,8 +10,18 @@ import androidx.compose.ui.graphics.Color
 // Windows 11 Fluent accent blue, matching the desktop UI.
 private val Accent = Color(0xFF0067C0)
 
-private val Dark = darkColorScheme(primary = Accent, secondary = Color(0xFF4CC2FF))
-private val Light = lightColorScheme(primary = Accent, secondary = Color(0xFF0078D4))
+private val Dark = darkColorScheme(
+    primary = Accent,
+    onPrimary = Color.White,
+    secondary = Color(0xFF4CC2FF),
+    onSecondary = Color.Black
+)
+private val Light = lightColorScheme(
+    primary = Accent,
+    onPrimary = Color.White,
+    secondary = Color(0xFF0078D4),
+    onSecondary = Color.White
+)
 
 @Composable
 fun PulseLinkTheme(content: @Composable () -> Unit) {
