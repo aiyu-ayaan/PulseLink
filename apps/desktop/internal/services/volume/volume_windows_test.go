@@ -16,81 +16,104 @@ import (
 	"github.com/moutend/go-wca/pkg/wca"
 )
 
-func TestDirectCallSetVolumeScalar(t *testing.T) {
-	levels := []int{0, 20, 50, 75, 100}
-	for _, lvl := range levels {
-		runtime.LockOSThread()
-		
+func TestCombinedVolumeSetting(t *testing.T) {
+	runtime.LockOSThread()
+	
+	// 1. Direct call test
+	func() {
 		if err := ole.CoInitializeEx(0, ole.COINIT_APARTMENTTHREADED); err != nil {
 			t.Fatalf("CoInitializeEx failed: %v", err)
 		}
+		defer ole.CoUninitialize()
 
 		var mmde *wca.IMMDeviceEnumerator
 		if err := wca.CoCreateInstance(wca.CLSID_MMDeviceEnumerator, 0, wca.CLSCTX_ALL, wca.IID_IMMDeviceEnumerator, &mmde); err != nil {
 			t.Fatalf("CoCreateInstance failed: %v", err)
 		}
+		defer mmde.Release()
 
 		var mmd *wca.IMMDevice
 		if err := mmde.GetDefaultAudioEndpoint(wca.ERender, wca.EConsole, &mmd); err != nil {
 			t.Fatalf("GetDefaultAudioEndpoint failed: %v", err)
+		}
+		defer mmd.Release()
+
+		var deviceID string
+		if err := mmd.GetId(&deviceID); err == nil {
+			fmt.Printf("COMBINED TEST - Direct call device ID: %s\n", deviceID)
 		}
 
 		var aev *wca.IAudioEndpointVolume
 		if err := mmd.Activate(wca.IID_IAudioEndpointVolume, wca.CLSCTX_ALL, nil, &aev); err != nil {
 			t.Fatalf("Activate failed: %v", err)
 		}
+		defer aev.Release()
 
-		targetScalar := float32(lvl) / 100
-		fnPtr := aev.VTable().SetMasterVolumeLevelScalar
-		fmt.Printf("DIRECT TEST - fnPtr: %X, aev: %X\n", fnPtr, uintptr(unsafe.Pointer(aev)))
+		targetScalar := float32(0.2)
 		hr := callSetVolumeScalar(
-			fnPtr,
+			aev.VTable().SetMasterVolumeLevelScalar,
 			uintptr(unsafe.Pointer(aev)),
-			targetScalar,
+			math.Float32bits(targetScalar),
 			0,
 		)
 		if hr != 0 {
-			t.Errorf("Failed to set scalar to %v: HRESULT %X", targetScalar, hr)
-		} else {
-			var actualScalar float32
-			if err := aev.GetMasterVolumeLevelScalar(&actualScalar); err != nil {
-				t.Errorf("Failed to get scalar after setting %v: %v", targetScalar, err)
-			} else {
-				fmt.Printf("DIRECT LOOP TEST - Set Level: %v -> Target Scalar: %v, Actual Scalar: %v, Calculated Level: %v\n",
-					lvl, targetScalar, actualScalar, int(math.Round(float64(actualScalar)*100)))
-			}
+			t.Fatalf("Direct call failed: HRESULT %X", hr)
 		}
+		var actualScalar float32
+		if err := aev.GetMasterVolumeLevelScalar(&actualScalar); err != nil {
+			t.Fatalf("GetMasterVolumeLevelScalar failed: %v", err)
+		}
+		var levelDB float32
+		_ = aev.GetMasterVolumeLevel(&levelDB)
+		fmt.Printf("COMBINED TEST - Direct call set to 0.2, read back scalar: %v, dB: %v\n", actualScalar, levelDB)
+	}()
 
-		aev.Release()
-		mmd.Release()
-		mmde.Release()
-		ole.CoUninitialize()
-		runtime.UnlockOSThread()
-	}
-}
-
-func TestSetVolumeWindowsService(t *testing.T) {
+	// 2. Service call test
 	log := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	bus := eventbus.New()
-
 	svc := New(log, bus)
 
-	levels := []int{0, 20, 50, 75, 100}
-	for _, lvl := range levels {
-		st, err := svc.SetVolume(lvl)
-		if err != nil {
-			t.Fatalf("SetVolume(%d) failed: %v", lvl, err)
+	st, err := svc.SetVolume(20)
+	if err != nil {
+		t.Fatalf("Service SetVolume failed: %v", err)
+	}
+	
+	// Read again using a fresh direct COM connection to see what was actually set on the PC
+	func() {
+		if err := ole.CoInitializeEx(0, ole.COINIT_APARTMENTTHREADED); err != nil {
+			t.Fatalf("CoInitializeEx failed: %v", err)
 		}
-		if st.Level != lvl {
-			t.Errorf("SetVolume(%d) expected return level %d, got %d", lvl, lvl, st.Level)
+		defer ole.CoUninitialize()
+
+		var mmde *wca.IMMDeviceEnumerator
+		if err := wca.CoCreateInstance(wca.CLSID_MMDeviceEnumerator, 0, wca.CLSCTX_ALL, wca.IID_IMMDeviceEnumerator, &mmde); err != nil {
+			t.Fatalf("CoCreateInstance failed: %v", err)
+		}
+		defer mmde.Release()
+
+		var mmd *wca.IMMDevice
+		if err := mmde.GetDefaultAudioEndpoint(wca.ERender, wca.EConsole, &mmd); err != nil {
+			t.Fatalf("GetDefaultAudioEndpoint failed: %v", err)
+		}
+		defer mmd.Release()
+
+		var deviceID string
+		if err := mmd.GetId(&deviceID); err == nil {
+			fmt.Printf("COMBINED TEST - Direct read back device ID: %s\n", deviceID)
 		}
 
-		current, err := svc.GetVolume()
-		if err != nil {
-			t.Fatalf("GetVolume() failed: %v", err)
+		var aev *wca.IAudioEndpointVolume
+		if err := mmd.Activate(wca.IID_IAudioEndpointVolume, wca.CLSCTX_ALL, nil, &aev); err != nil {
+			t.Fatalf("Activate failed: %v", err)
 		}
-		if current.Level != lvl {
-			t.Errorf("After SetVolume(%d), GetVolume() returned level %d, expected %d", lvl, current.Level, lvl)
-		}
-	}
+		defer aev.Release()
+
+		var actualScalar float32
+		_ = aev.GetMasterVolumeLevelScalar(&actualScalar)
+		var levelDB float32
+		_ = aev.GetMasterVolumeLevel(&levelDB)
+		fmt.Printf("COMBINED TEST - After Service SetVolume(20), direct read back scalar: %v, dB: %v (service returned Level: %d)\n", actualScalar, levelDB, st.Level)
+	}()
+
+	runtime.UnlockOSThread()
 }

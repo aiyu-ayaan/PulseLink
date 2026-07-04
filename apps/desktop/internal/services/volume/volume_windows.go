@@ -5,6 +5,7 @@ package volume
 import (
 	"math"
 	"runtime"
+	"time"
 	"unsafe"
 
 	"github.com/go-ole/go-ole"
@@ -37,6 +38,11 @@ func withEndpointVolume(fn func(*wca.IAudioEndpointVolume) error) error {
 	}
 	defer mmd.Release()
 
+	var deviceID string
+	if err := mmd.GetId(&deviceID); err == nil {
+		println("DEBUG: withEndpointVolume device ID =", deviceID)
+	}
+
 	var aev *wca.IAudioEndpointVolume
 	if err := mmd.Activate(wca.IID_IAudioEndpointVolume, wca.CLSCTX_ALL, nil, &aev); err != nil {
 		return err
@@ -47,7 +53,7 @@ func withEndpointVolume(fn func(*wca.IAudioEndpointVolume) error) error {
 }
 
 // Declare assembly function to invoke SetMasterVolumeLevelScalar with floating-point parameters mapped to XMM registers (Windows AMD64).
-func callSetVolumeScalar(fn uintptr, aev uintptr, level float32, eventContextGUID uintptr) uintptr
+func callSetVolumeScalar(fn uintptr, aev uintptr, levelBits uint32, eventContextGUID uintptr) uintptr
 
 // readState reads the current scalar level (0-1) and mute flag.
 func readState(aev *wca.IAudioEndpointVolume) (VolumeState, error) {
@@ -55,12 +61,12 @@ func readState(aev *wca.IAudioEndpointVolume) (VolumeState, error) {
 	if err := aev.GetMasterVolumeLevelScalar(&scalar); err != nil {
 		return VolumeState{}, err
 	}
-	var muted bool
-	if err := aev.GetMute(&muted); err != nil {
+	var mutedVal int32
+	if err := aev.GetMute((*bool)(unsafe.Pointer(&mutedVal))); err != nil {
 		return VolumeState{}, err
 	}
-	println("DEBUG: readState scalar =", scalar)
-	return VolumeState{Level: int(math.Round(float64(scalar) * 100)), Muted: muted}, nil
+	println("DEBUG: readState aev =", uintptr(unsafe.Pointer(aev)), "scalar =", scalar)
+	return VolumeState{Level: int(math.Round(float64(scalar) * 100)), Muted: mutedVal != 0}, nil
 }
 
 func (s *Service) GetVolume() (VolumeState, error) {
@@ -82,99 +88,60 @@ func (s *Service) SetVolume(level int) (VolumeState, error) {
 	}
 	s.log.Info("volume action: set", "level", level)
 
-	runtime.LockOSThread()
-	defer runtime.UnlockOSThread()
-
-	if err := ole.CoInitializeEx(0, ole.COINIT_APARTMENTTHREADED); err != nil {
+	err := withEndpointVolume(func(aev *wca.IAudioEndpointVolume) error {
+		targetScalar := float32(level) / 100
+		println("DEBUG: SetVolume targetScalar =", targetScalar, "bits =", math.Float32bits(targetScalar))
+		hr := callSetVolumeScalar(
+			aev.VTable().SetMasterVolumeLevelScalar,
+			uintptr(unsafe.Pointer(aev)),
+			math.Float32bits(targetScalar),
+			0,
+		)
+		if hr != 0 {
+			return ole.NewError(hr)
+		}
+		return nil
+	})
+	if err != nil {
 		return VolumeState{}, err
 	}
-	defer ole.CoUninitialize()
 
-	var mmde *wca.IMMDeviceEnumerator
-	if err := wca.CoCreateInstance(wca.CLSID_MMDeviceEnumerator, 0, wca.CLSCTX_ALL, wca.IID_IMMDeviceEnumerator, &mmde); err != nil {
-		return VolumeState{}, err
-	}
-	defer mmde.Release()
-
-	var mmd *wca.IMMDevice
-	if err := mmde.GetDefaultAudioEndpoint(wca.ERender, wca.EConsole, &mmd); err != nil {
-		return VolumeState{}, err
-	}
-	defer mmd.Release()
-
-	var aev *wca.IAudioEndpointVolume
-	if err := mmd.Activate(wca.IID_IAudioEndpointVolume, wca.CLSCTX_ALL, nil, &aev); err != nil {
-		return VolumeState{}, err
-	}
-	defer aev.Release()
-
-	targetScalar := float32(level)/100
-	fnPtr := aev.VTable().SetMasterVolumeLevelScalar
-	println("SERVICE SETVOLUME - fnPtr =", fnPtr, "aev =", uintptr(unsafe.Pointer(aev)), "targetScalar =", targetScalar, "bits =", math.Float32bits(targetScalar))
-	hr := callSetVolumeScalar(
-		fnPtr,
-		uintptr(unsafe.Pointer(aev)),
-		targetScalar,
-		0,
-	)
-	if hr != 0 {
-		return VolumeState{}, ole.NewError(hr)
-	}
-
-	return readState(aev)
+	time.Sleep(200 * time.Millisecond)
+	return s.GetVolume()
 }
 
 // step nudges the current scalar by delta, clamped to [0,1], and returns the
 // resulting state. Used by up/down so the exact new level is reported back.
 func (s *Service) step(delta float32) (VolumeState, error) {
-	runtime.LockOSThread()
-	defer runtime.UnlockOSThread()
-
-	if err := ole.CoInitializeEx(0, ole.COINIT_APARTMENTTHREADED); err != nil {
+	err := withEndpointVolume(func(aev *wca.IAudioEndpointVolume) error {
+		var cur float32
+		if e := aev.GetMasterVolumeLevelScalar(&cur); e != nil {
+			return e
+		}
+		next := cur + delta
+		if next < 0 {
+			next = 0
+		}
+		if next > 1 {
+			next = 1
+		}
+		hr := callSetVolumeScalar(
+			aev.VTable().SetMasterVolumeLevelScalar,
+			uintptr(unsafe.Pointer(aev)),
+			math.Float32bits(next),
+			0,
+		)
+		if hr != 0 {
+			return ole.NewError(hr)
+		}
+		return nil
+	})
+	if err != nil {
 		return VolumeState{}, err
 	}
-	defer ole.CoUninitialize()
 
-	var mmde *wca.IMMDeviceEnumerator
-	if err := wca.CoCreateInstance(wca.CLSID_MMDeviceEnumerator, 0, wca.CLSCTX_ALL, wca.IID_IMMDeviceEnumerator, &mmde); err != nil {
-		return VolumeState{}, err
-	}
-	defer mmde.Release()
-
-	var mmd *wca.IMMDevice
-	if err := mmde.GetDefaultAudioEndpoint(wca.ERender, wca.EConsole, &mmd); err != nil {
-		return VolumeState{}, err
-	}
-	defer mmd.Release()
-
-	var aev *wca.IAudioEndpointVolume
-	if err := mmd.Activate(wca.IID_IAudioEndpointVolume, wca.CLSCTX_ALL, nil, &aev); err != nil {
-		return VolumeState{}, err
-	}
-	defer aev.Release()
-
-	var cur float32
-	if e := aev.GetMasterVolumeLevelScalar(&cur); e != nil {
-		return VolumeState{}, e
-	}
-	next := cur + delta
-	if next < 0 {
-		next = 0
-	}
-	if next > 1 {
-		next = 1
-	}
-	hr := callSetVolumeScalar(
-		aev.VTable().SetMasterVolumeLevelScalar,
-		uintptr(unsafe.Pointer(aev)),
-		next,
-		0,
-	)
-	if hr != 0 {
-		return VolumeState{}, ole.NewError(hr)
-	}
-
-	return readState(aev)
+	time.Sleep(200 * time.Millisecond)
+	return s.GetVolume()
 }
 
 func (s *Service) VolumeUp() (VolumeState, error) {
@@ -191,11 +158,11 @@ func (s *Service) VolumeMute() (VolumeState, error) {
 	s.log.Info("volume action: mute")
 	var st VolumeState
 	err := withEndpointVolume(func(aev *wca.IAudioEndpointVolume) error {
-		var muted bool
-		if e := aev.GetMute(&muted); e != nil {
+		var mutedVal int32
+		if e := aev.GetMute((*bool)(unsafe.Pointer(&mutedVal))); e != nil {
 			return e
 		}
-		if e := aev.SetMute(!muted, nil); e != nil {
+		if e := aev.SetMute(mutedVal == 0, nil); e != nil {
 			return e
 		}
 		var e error
