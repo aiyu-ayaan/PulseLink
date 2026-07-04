@@ -1,81 +1,100 @@
 # PulseLink Development Progress 📈
 
-This document tracks the implementation progress of the PulseLink project, highlighting completed features, architectural milestones, and outstanding tasks.
+Tracks implementation progress. Newest work is at the top of each section so a
+fresh session can catch up fast.
 
 ---
 
-## 🚦 Overall Status Summary
+## 🚦 Overall Status
 
-- **[Stage 1 — Desktop Backend Services]**: **100% Completed** ✅
-  - Clean modular architecture using Go interfaces, dependency injection, and event bus handlers.
-  - Full suite of 11 native Windows companion services (compilation-safe on non-Windows dev systems).
-  - Secure TLS WebSocket server, Hub client manager, and message Router.
-  - SQLite storage repositories for setting key/value pairs, pairings, trusted devices, automations, and slog transactions.
-- **[Stage 2 — Desktop Application UI]**: **100% Completed** ✅
-  - Scaffolded React + TypeScript + TailwindCSS v4 + Framer Motion frontend panel.
-  - High-fidelity Windows 11 Fluent dark-themed dashboard inspired by the `/ui-ux-pro-max` styling system.
-  - ClientHello handshake logic and automatic status updates (sysinfo, volume, brightness).
-  - Go server upgrade to host pre-compiled static UI files natively on the default port.
-- **[Stage 3 — Android Companion App]**: **0% Completed** ⏳
-  - Not started yet. This is the next primary implementation phase.
+| Stage | Scope | Status |
+|-------|-------|--------|
+| 1 | Desktop backend (Go services, WS server, storage) | ✅ Done |
+| 2 (old) | First-pass React UI | ⚠️ Superseded by Stage A rebuild |
+| **A** | **Desktop UI rebuilt as Windows 11 Fluent/Mica** | ✅ Done + verified here |
+| **B** | **Real Wails v3 native window** | 🟦 Code complete — user must build/verify |
+| **C** | **Android companion MVP** | ⏳ Next |
+
+Design spec for A/B/C: `docs/superpowers/specs/2026-07-04-pulselink-desktop-android-mvp-design.md`
 
 ---
 
-## 🛠️ Detailed Breakdown
+## 🟩 Stage A — Desktop UI rebuild (DONE)
 
-### 🟩 Stage 1 — Desktop Backend (Completed)
-- [x] **Event Bus & Logging**: In-process pub/sub bus to prevent circular dependencies; structured logging (`slog`).
-- [x] **SQLite Storage**: Databases to manage trusted keys, logs, settings, and automation actions.
-- [x] **WebSocket Server**: Configurable listening socket with self-signed TLS generation support.
-- [x] **Windows Services Core**:
-  - [x] *Media Control*: Key event simulator for Play, Pause, Next, Prev, Stop.
-  - [x] *Volume Control*: Key event volume adjustments and CoreAudio COM APIs interface.
-  - [x] *Display Brightness*: WMI query laptop adjuster and DDC/CI external monitor bindings.
-  - [x] *Clipboard Sync*: Unicode UTF-16 Win32 Clipboard listener and event-bus broadcaster.
-  - [x] *Power Commands*: Lock PC, Sleep state, Restart, and Shutdown CLI commands.
-  - [x] *System Info*: CPU usage calculations, RAM total/free sizes, battery levels, monitor detection.
-  - [x] *Predefined Apps*: Launch Notepad, Calculator, Paint, and CMD asynchronously.
-  - [x] *Input simulation*: Virtual mouse clicks and movement coordinates.
-  - [x] *Notification toasts*: ToastNotificationManager Windows notifications wrapper.
-  - [x] *File transfer*: Resolves base64 upload chunks and saves to local downloads directory.
-  - [x] *Settings manager*: Direct edits and serialization to `config.json`.
+Replaced the monolithic ~1300-line `App.tsx` (neon-green "AI slop") with a real
+Windows 11 **Fluent / Mica** design system and componentized panels.
 
-### 🟩 Stage 2 — Desktop Application UI (Completed)
-- [x] **Aesthetics System**: Fluent dark theme using deep colors, light glassmorphism panels, and smooth transitions.
-- [x] **Vite React Scaffold**: Clean TypeScript React environment, integrated with TailwindCSS v4 and Framer Motion.
-- [x] **Connection Handshake**: Implemented standard client negotiation matching the server's authenticator check.
-- [x] **Panel Tabs**:
-  - [x] *Dashboard*: Live PC resources, quick power controls, master volume slider.
-  - [x] *Devices Manager*: Pairing simulator with custom-drawn QR Code card and tokens.
-  - [x] *Media & Volume*: Retro play buttons and sliders.
-  - [x] *Display Brightness*: Multi-monitor slider panel.
-  - [x] *Clipboard Sync*: Input/output clipboard panels with log streams.
-  - [x] *Notification Bridge*: Send custom toasts to target PC.
-  - [x] *Apps launcher*: Quick-click launch buttons.
-  - [x] *Console Logs*: Live log console with clear actions.
-  - [x] *Settings Panel*: Modifies device advertisement name, port, TLS check, and log levels.
-- [x] **Unified Asset Hosting**: Integrated static FileServer inside Go to host `/dist` directory.
+- **Design system** (`src/index.css`): Windows accent **blue** (not green),
+  Segoe UI Variable, translucent mica surfaces, **light + dark** themes via
+  `data-theme`, Fluent slider/scrollbar/focus styling.
+- **`src/lib/backend.tsx`** — `BackendProvider` + `useBackend()` centralizes the
+  WebSocket protocol, connection, polling, and shared state.
+- **`src/components/`** — `ui.tsx` (Card, Button, Toggle, StatTile, Meter,
+  Badge, Field), `Sidebar.tsx`.
+- **`src/panels/`** — Dashboard, MediaVolume, Brightness, Devices, Clipboard,
+  Notifications, Apps, Logs, Settings.
+- **Devices panel renders a REAL scannable QR** (`qrcode` dep) encoding
+  `pulselink://pair?host=&port=&token=&name=` — replaced the fake CSS-grid QR
+  and the fabricated device list.
+- **Verified**: `npm run build` clean (0 type errors); headless Chrome
+  screenshot reviewed — genuine Fluent dashboard.
 
-### 🟨 Stage 3 — Android Companion App (What's Left)
-This stage is the next block of work. Key deliverables will include:
-- [ ] **Android Project Setup**:
-  - Configure Gradle, Kotlin dependencies (Jetpack Compose, Room, Hilt, Ktor Client).
-  - Adopt MVVM architectural patterns and Material You dynamic color styling.
-- [ ] **Background Connection Service**:
-  - Setup background foreground service to listen to local network broadcast.
-  - Connect secure encrypted WebSocket Client to Desktop.
-  - Automatic reconnection handling during Wi-Fi drops.
-- [ ] **Android Core Features**:
-  - QR Code scanner to extract connection token.
-  - Media controller UI (pauses desktop media during incoming calls).
-  - Volume & Brightness sliders.
-  - Clipboard monitoring to sync mobile clipboard to PC.
-  - Notification forwarding (receives notifications from phone and posts them as toasts on PC).
-  - Quick Settings Tile / Widgets for dashboard shortcuts.
-- [ ] **Local Storage**: Room database to store paired PC keys and connection details.
+## 🟦 Stage B — Wails v3 native window (code complete, user-verified)
+
+Turns the "web app served by a headless daemon" into a real native Windows app.
+
+- **`apps/desktop/main.go`** (`//go:build wails`): native WebView2 window that
+  embeds the built frontend and runs the backend **in-process**.
+- **`apps/desktop/stub.go`** (`//go:build !wails`): keeps `go build/test ./...`
+  green without the Wails dep. Real app: `go build -tags wails ./apps/desktop`.
+- Loopback UI runs **plain ws** (WebView2 serves `http://`), so no cert trust
+  needed; `main.go` sets `EnableTLS=false`. Self-signed TLS code stays for later.
+- **`docs/desktop-app.md`** — toolchain + build steps.
+- ⚠️ **Blocker for the user**: dev machine has 32-bit Go (`windows/386`); Wails
+  needs **64-bit Go + gcc + WebView2**. After installing: `npm run build` →
+  `go get github.com/wailsapp/wails/v3@latest && go mod tidy` →
+  `go build -tags wails -o pulselink.exe ./apps/desktop`.
+- ⚠️ The exact Wails v3 window API may need minor adjustment for the pinned
+  release (couldn't be compiled here without the toolchain).
+
+## ⏳ Stage C — Android companion MVP (NEXT)
+
+Kotlin + Compose + Material 3, MVVM, under `apps/android/` (currently just
+`.gitkeep`s). Planned:
+- Gradle/Compose skeleton (version catalog; Ktor, Room, CameraX + ML Kit).
+- **Connect screen**: manual `host:port` **and** QR scan (decodes the
+  `pulselink://pair` URI the desktop shows).
+- **Ktor WebSocket client** speaking the protocol below (ClientHello →
+  ServerWelcome → request/response/event).
+- **Control screen**: media transport, volume slider + mute, power
+  (lock/sleep/restart/shutdown), live sysinfo tiles.
+- **Room** persists the last paired PC; basic reconnect.
+- MVP uses **plain ws** (matches Stage B); TLS + token enforcement are follow-ups.
 
 ---
 
-## 📈 Verification Checklist
-- **Backend Tests (`go test ./...`)**: PASSING (100% success).
-- **Frontend Compiler (`npm run build`)**: SUCCESS (0 type errors, clean CSS output).
+## 🔌 Protocol reference (backend is done — clients just speak this)
+
+JSON WebSocket at `/ws`. Envelope:
+`{ id, type(request|response|event), capability, action, payload?, error? }`
+
+- Handshake: `handshake/hello` (ClientHello) → `handshake/welcome` (ServerWelcome).
+- `media`: play_pause · next · previous · stop
+- `volume`: up · down · mute · get · set `{level}`
+- `power`: lock · sleep · restart · shutdown
+- `sysinfo`: get → `{hostname, os, cpuUsage, ramTotal, ramFree, batteryPct, isCharging, monitorCount}`
+- `brightness`: get · set `{type: internal|external, level}`
+- `clipboard`: get · set `{text}` · `changed` (event)
+- `apps`: launch `{name}` · `notification`: toast `{title, message}`
+- `settings`: get · set (config.json)
+- Auth is **AllowAll** (dev) — token carried but not enforced yet.
+
+---
+
+## 📈 Verification
+
+- Backend: `go build ./...` ✅ · `go test ./...` ✅ (vet has pre-existing
+  `unsafe.Pointer` notes in `clipboard_windows.go`).
+- Frontend: `cd apps/desktop/frontend && npm run build` ✅ (0 type errors).
+- Wails native app: **user builds** with `-tags wails` after toolchain setup.
+- Android: **user builds** in Android Studio (Stage C).
