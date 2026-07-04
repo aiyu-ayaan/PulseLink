@@ -13,7 +13,7 @@ fresh session can catch up fast.
 | 2 (old) | First-pass React UI | ⚠️ Superseded by Stage A rebuild |
 | **A** | **Desktop UI rebuilt as Windows 11 Fluent/Mica** | ✅ Done + verified here |
 | **B** | **Real Wails v3 native window** | 🟦 Code complete — user must build/verify |
-| **C** | **Android companion MVP** | ⏳ Next |
+| **C** | **Android companion MVP** | 🟦 Code complete — user builds in Android Studio |
 
 Design spec for A/B/C: `docs/superpowers/specs/2026-07-04-pulselink-desktop-android-mvp-design.md`
 
@@ -57,19 +57,43 @@ Turns the "web app served by a headless daemon" into a real native Windows app.
 - ⚠️ The exact Wails v3 window API may need minor adjustment for the pinned
   release (couldn't be compiled here without the toolchain).
 
-## ⏳ Stage C — Android companion MVP (NEXT)
+## 🟦 Stage C — Android companion MVP (CODE COMPLETE)
 
-Kotlin + Compose + Material 3, MVVM, under `apps/android/` (currently just
-`.gitkeep`s). Planned:
-- Gradle/Compose skeleton (version catalog; Ktor, Room, CameraX + ML Kit).
-- **Connect screen**: manual `host:port` **and** QR scan (decodes the
-  `pulselink://pair` URI the desktop shows).
-- **Ktor WebSocket client** speaking the protocol below (ClientHello →
-  ServerWelcome → request/response/event).
-- **Control screen**: media transport, volume slider + mute, power
-  (lock/sleep/restart/shutdown), live sysinfo tiles.
-- **Room** persists the last paired PC; basic reconnect.
-- MVP uses **plain ws** (matches Stage B); TLS + token enforcement are follow-ups.
+Kotlin + Compose + Material 3, MVVM, **single-module** app under `apps/android/`
+(the `core/feature/service/widgets` multi-module split is a follow-up — an MVP
+doesn't need it). Package `com.pulselink`.
+
+**Gradle scaffold:** `settings.gradle.kts`, root `build.gradle.kts`,
+`gradle.properties`, `gradle/libs.versions.toml` (AGP 8.7.3, Kotlin 2.0.21,
+Compose BOM, Ktor 2.3.12, CameraX 1.3.4, ML Kit barcode, kotlinx.serialization),
+`app/build.gradle.kts`, `AndroidManifest.xml` (INTERNET + CAMERA,
+`usesCleartextTraffic` for ws://), base resources/theme.
+
+**App code (`app/src/main/java/com/pulselink/`):**
+- `net/Protocol.kt` — Envelope + ClientHello/ServerWelcome/SysInfo/Volume,
+  mirrors `internal/protocol`. Payload is a `JsonElement`, decoded per-capability.
+- `net/PulseClient.kt` — Ktor CIO WebSocket client. `connect()` opens `/ws`,
+  sends hello, pumps frames; exposes `StateFlow` of `ConnState` + `sysInfo` +
+  `volume` + `error`. Polls `sysinfo/get` every 4 s once ready. Helpers:
+  `media()`, `power()`, `setVolume()`, `volumeUp/Down()`, `toggleMute()`.
+- `pairing/PairingUri.kt` — parses `pulselink://pair?host=&port=&token=&name=`.
+- `MainViewModel` — owns the client; persists last host/port in
+  **SharedPreferences** (not Room — one row is a preference, not a database;
+  Room/KSP dropped from the build). `connectPaired()` for QR flow.
+- `ui/Theme.kt` (Fluent accent blue), `ui/ConnectScreen.kt` (manual host:port +
+  **CameraX/ML-Kit QR scan** behind a runtime camera permission),
+  `ui/QrScanner.kt` (CameraX preview + ML Kit analyzer),
+  `ui/ControlScreen.kt` (live sysinfo card, media transport, volume slider,
+  power lock/sleep), `MainActivity.kt` (Connect ↔ Control by connection state).
+
+**⚠️ Not compiled here** — no Android SDK / Gradle wrapper jar on this host.
+Written and reviewed for common Kotlin/Compose/CameraX pitfalls; **user builds
+in Android Studio**. `gradle/wrapper/gradle-wrapper.jar` is not committed — let
+Android Studio generate it on first sync (or run `gradle wrapper`).
+
+**Notes:** MVP uses **plain ws** (matches Stage B); TLS + token enforcement are
+follow-ups. Brightness/clipboard/apps/notification panels are follow-ups too —
+the MVP covers media, volume, power, and live sysinfo.
 
 ---
 
