@@ -163,10 +163,15 @@ class PulseClient(private val scope: CoroutineScope) {
             return
         }
         if (env.error != null) { _error.value = env.error.message; return }
-        val p = env.payload ?: return
         when (env.capability) {
-            "sysinfo" -> runCatching { json.decodeFromJsonElement(SysInfo.serializer(), p) }.getOrNull()?.let { _sysInfo.value = it }
-            "volume" -> runCatching { json.decodeFromJsonElement(Volume.serializer(), p) }.getOrNull()?.let { _volume.value = it }
+            "sysinfo" -> {
+                val p = env.payload ?: return
+                runCatching { json.decodeFromJsonElement(SysInfo.serializer(), p) }.getOrNull()?.let { _sysInfo.value = it }
+            }
+            "volume" -> {
+                val p = env.payload ?: return
+                runCatching { json.decodeFromJsonElement(Volume.serializer(), p) }.getOrNull()?.let { _volume.value = it }
+            }
             "pairing" -> {
                 if (env.action == "approved") {
                     scope.launch {
