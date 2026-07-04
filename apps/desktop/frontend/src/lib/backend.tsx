@@ -278,7 +278,15 @@ export function BackendProvider({ children }: { children: ReactNode }) {
           log(`parse error: ${err.message}`)
         }
       }
-      ws.onerror = () => setError(`Connection error. Is the backend running on ${h}:${p}?`)
+      ws.onerror = () => {
+        setError(`Connection error. Is the backend running on ${h}:${p}?`)
+        if (h === 'localhost') {
+          log(`localhost connection failed, trying fallback 127.0.0.1`)
+          hostRef.current = '127.0.0.1'
+          setHost('127.0.0.1')
+          setTimeout(connect, 200)
+        }
+      }
       ws.onclose = () => {
         setStatus('disconnected')
         if (pollRef.current) clearInterval(pollRef.current)
