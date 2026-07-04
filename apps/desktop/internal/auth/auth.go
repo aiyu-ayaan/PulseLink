@@ -23,7 +23,6 @@ func New(store *storage.Store, bus *eventbus.Bus) *Authenticator {
 }
 
 func (a *Authenticator) Authenticate(hello protocol.ClientHello) (transport.AuthResult, error) {
-	// If the connection is from the desktop-ui itself, allow it
 	if hello.DeviceID == "desktop-ui" {
 		return transport.AuthResult{
 			Accepted:   true,
@@ -32,11 +31,9 @@ func (a *Authenticator) Authenticate(hello protocol.ClientHello) (transport.Auth
 		}, nil
 	}
 
-	// Check if this device is already in the database
 	dev, err := a.store.Devices.Get(hello.DeviceID)
 	if err == nil {
 		if dev.Trusted {
-			// Update last seen
 			_ = a.store.Devices.TouchLastSeen(hello.DeviceID, time.Now())
 			return transport.AuthResult{
 				Accepted:   true,
@@ -45,7 +42,6 @@ func (a *Authenticator) Authenticate(hello protocol.ClientHello) (transport.Auth
 			}, nil
 		}
 
-		// Device exists but is not yet trusted. Trigger pairing notification again.
 		a.bus.Publish(eventbus.Event{
 			Topic: "pairing.request",
 			Payload: transport.DeviceInfo{
@@ -67,7 +63,6 @@ func (a *Authenticator) Authenticate(hello protocol.ClientHello) (transport.Auth
 		return transport.AuthResult{}, err
 	}
 
-	// Device is not in database. Create an untrusted entry and trigger pairing request.
 	publicKey := hello.Token
 	if publicKey == "" {
 		publicKey = "manual-pairing"
@@ -90,13 +85,15 @@ func (a *Authenticator) Authenticate(hello protocol.ClientHello) (transport.Auth
 		_ = a.store.Pairings.MarkUsed(hello.Token, hello.DeviceID)
 	}
 
+	info := transport.DeviceInfo{
+		ID:           hello.DeviceID,
+		Name:         hello.DeviceName,
+		Capabilities: hello.Capabilities,
+	}
+
 	a.bus.Publish(eventbus.Event{
-		Topic: "pairing.request",
-		Payload: transport.DeviceInfo{
-			ID:           hello.DeviceID,
-			Name:         hello.DeviceName,
-			Capabilities: hello.Capabilities,
-		},
+		Topic:   "pairing.request",
+		Payload: info,
 	})
 
 	return transport.AuthResult{

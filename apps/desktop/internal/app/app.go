@@ -135,33 +135,56 @@ func New(cfgPath string) (*App, error) {
 	bus.Subscribe("pairing.request", func(ev eventbus.Event) {
 		payload, ok := ev.Payload.(transport.DeviceInfo)
 		if !ok {
+			log.Warn("pairing.request dropped: unexpected payload type")
 			return
 		}
+		log.Info("pairing.request event", "device", payload.ID, "name", payload.Name)
 		env, err := protocol.NewEvent("pairing", "request", payload)
-		if err == nil {
-			hub.Broadcast(env)
+		if err != nil {
+			log.Error("pairing.request encode", "err", err)
+			return
 		}
+		hub.Broadcast(env)
 	})
 
 	// Forward pairing approvals to the specific device.
 	bus.Subscribe("pairing.approved", func(ev eventbus.Event) {
 		deviceID, ok := ev.Payload.(string)
 		if !ok {
+			log.Warn("pairing.approved dropped: unexpected payload type")
 			return
 		}
+		log.Info("pairing.approved event", "device", deviceID)
 		env, err := protocol.NewEvent("pairing", "approved", nil)
-		if err == nil {
-			hub.SendToDevice(deviceID, env)
+		if err != nil {
+			log.Error("pairing.approved encode", "err", err)
+			return
 		}
+		hub.SendToDevice(deviceID, env)
 	})
 
 	// Handle pairing rejections by disconnecting the device.
 	bus.Subscribe("pairing.rejected", func(ev eventbus.Event) {
 		deviceID, ok := ev.Payload.(string)
 		if !ok {
+			log.Warn("pairing.rejected dropped: unexpected payload type")
 			return
 		}
+		log.Info("pairing.rejected event", "device", deviceID)
 		hub.DisconnectDevice(deviceID)
+	})
+
+	// Log presence changes for debugging.
+	bus.Subscribe(TopicPresence, func(ev eventbus.Event) {
+		payload, ok := ev.Payload.([]transport.DeviceInfo)
+		if !ok {
+			return
+		}
+		ids := make([]string, len(payload))
+		for i, d := range payload {
+			ids[i] = d.ID
+		}
+		log.Debug("presence changed", "connected", ids)
 	})
 
 	if err := a.buildServer(); err != nil {

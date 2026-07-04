@@ -63,12 +63,34 @@ func (s *Service) Handle(ctx context.Context, req protocol.Envelope) (any, error
 		}
 		return pending, nil
 
+	case "pending":
+		all, err := s.store.Devices.List()
+		if err != nil {
+			return nil, err
+		}
+		count := 0
+		var pending []transport.DeviceInfo
+		for _, d := range all {
+			if !d.Trusted {
+				count++
+				pending = append(pending, transport.DeviceInfo{
+					ID:           d.ID,
+					Name:         d.Name,
+					Capabilities: d.Capabilities,
+				})
+			}
+		}
+		return map[string]any{
+			"count":   count,
+			"devices": pending,
+		}, nil
+
 	case "accept":
 		var payload DeviceActionPayload
 		if err := req.Bind(&payload); err != nil {
 			return nil, &protocol.Error{Code: protocol.CodeBadRequest, Message: "malformed pairing payload"}
 		}
-		
+
 		s.log.Info("pairing accepted", "device", payload.DeviceID)
 		if err := s.store.Devices.SetTrusted(payload.DeviceID, true); err != nil {
 			return nil, err
@@ -78,14 +100,14 @@ func (s *Service) Handle(ctx context.Context, req protocol.Envelope) (any, error
 			Topic:   "pairing.approved",
 			Payload: payload.DeviceID,
 		})
-		return nil, nil
+		return map[string]string{"status": "approved", "deviceId": payload.DeviceID}, nil
 
 	case "reject":
 		var payload DeviceActionPayload
 		if err := req.Bind(&payload); err != nil {
 			return nil, &protocol.Error{Code: protocol.CodeBadRequest, Message: "malformed pairing payload"}
 		}
-		
+
 		s.log.Info("pairing rejected", "device", payload.DeviceID)
 		_ = s.store.Devices.Delete(payload.DeviceID)
 
@@ -93,7 +115,7 @@ func (s *Service) Handle(ctx context.Context, req protocol.Envelope) (any, error
 			Topic:   "pairing.rejected",
 			Payload: payload.DeviceID,
 		})
-		return nil, nil
+		return map[string]string{"status": "rejected", "deviceId": payload.DeviceID}, nil
 
 	default:
 		return nil, &protocol.Error{Code: protocol.CodeUnsupported, Message: "unknown pairing action"}
