@@ -52,6 +52,19 @@ export interface BackendConfig {
   databasePath: string
   logLevel: string
   deviceName: string
+  permissions: {
+    media: boolean
+    volume: boolean
+    brightness: boolean
+    clipboard: boolean
+    notifications: boolean
+    apps: boolean
+    power: boolean
+    sysinfo: boolean
+    input: boolean
+    filetransfer: boolean
+  }
+  maxCompatibilityMode: boolean
 }
 
 export interface PairingInfo {
@@ -102,6 +115,19 @@ const defaultConfig: BackendConfig = {
   databasePath: '',
   logLevel: 'info',
   deviceName: 'PulseLink-PC',
+  permissions: {
+    media: true,
+    volume: true,
+    brightness: true,
+    clipboard: true,
+    notifications: true,
+    apps: true,
+    power: true,
+    sysinfo: true,
+    input: true,
+    filetransfer: true,
+  },
+  maxCompatibilityMode: false,
 }
 
 const Ctx = createContext<BackendState | null>(null)

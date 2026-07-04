@@ -1,16 +1,14 @@
 import { useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import {
-  LayoutDashboard, Smartphone, Volume2, Sun, ClipboardList,
+  Volume2, Sun, ClipboardList,
   Bell, AppWindow, Terminal, Settings as SettingsIcon, Moon, SunMedium,
 } from 'lucide-react'
 import { BackendProvider, useBackend } from './lib/backend'
 import { Sidebar, type NavItem } from './components/Sidebar'
 import { PairingDialog } from './components/PairingDialog'
-import { Dashboard } from './panels/Dashboard'
 import { MediaVolume } from './panels/MediaVolume'
 import { Brightness } from './panels/Brightness'
-import { Devices } from './panels/Devices'
 import { Clipboard } from './panels/Clipboard'
 import { Notifications } from './panels/Notifications'
 import { Apps } from './panels/Apps'
@@ -18,8 +16,6 @@ import { Logs } from './panels/Logs'
 import { Settings } from './panels/Settings'
 
 const NAV: NavItem[] = [
-  { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
-  { id: 'devices', label: 'Devices', icon: Smartphone },
   { id: 'media', label: 'Media & Volume', icon: Volume2 },
   { id: 'brightness', label: 'Brightness', icon: Sun },
   { id: 'clipboard', label: 'Clipboard', icon: ClipboardList },
@@ -30,8 +26,6 @@ const NAV: NavItem[] = [
 ]
 
 const PANELS: Record<string, React.FC> = {
-  dashboard: Dashboard,
-  devices: Devices,
   media: MediaVolume,
   brightness: Brightness,
   clipboard: Clipboard,
@@ -42,10 +36,10 @@ const PANELS: Record<string, React.FC> = {
 }
 
 function Shell() {
-  const [active, setActive] = useState('dashboard')
+  const [active, setActive] = useState('settings')
   const { host, port, setHost, setPort, connect, status, error, theme, toggleTheme } = useBackend()
 
-  const Panel = PANELS[active] ?? Dashboard
+  const Panel = PANELS[active] ?? Settings
   const title = NAV.find((n) => n.id === active)?.label ?? ''
 
   return (

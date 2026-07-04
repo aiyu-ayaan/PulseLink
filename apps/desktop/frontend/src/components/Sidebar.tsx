@@ -43,7 +43,7 @@ export function Sidebar({
         {items.map((item) => {
           const Icon = item.icon
           const isActive = active === item.id
-          const showBadge = item.id === 'devices' && pendingCount > 0
+          const showBadge = item.id === 'settings' && pendingCount > 0
           return (
             <button
               key={item.id}
