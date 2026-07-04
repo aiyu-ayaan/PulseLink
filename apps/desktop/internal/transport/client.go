@@ -131,8 +131,11 @@ func (c *Client) readPump(ctx context.Context, router *Router) {
 				"capability not granted: "+req.Capability))
 			continue
 		}
-		resp := router.Dispatch(ctx, req)
-		c.Send(resp)
+		// ponytail: dispatch per-request in its own goroutine so a slow handler
+		// (e.g. sysinfo/volume shelling out) doesn't block every other command
+		// behind it on this connection. Responses still funnel through the
+		// thread-safe send channel; clients correlate by ID so order is fine.
+		go c.Send(router.Dispatch(ctx, req))
 	}
 }
 

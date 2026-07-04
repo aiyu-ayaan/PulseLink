@@ -31,6 +31,12 @@ export interface SysInfo {
   monitorCount: number
 }
 
+export interface DeviceInfo {
+  id: string
+  name: string
+  capabilities: string[]
+}
+
 export interface BackendConfig {
   server: { host: string; port: number; enableTls: boolean; certFile: string; keyFile: string }
   databasePath: string
@@ -57,6 +63,8 @@ interface BackendState {
   host: string
   port: string
   theme: 'dark' | 'light'
+  devices: DeviceInfo[]
+  pairingRequests: DeviceInfo[]
   setHost: (v: string) => void
   setPort: (v: string) => void
   connect: () => void
@@ -64,6 +72,8 @@ interface BackendState {
   pushClipEvent: (e: ClipEvent) => void
   clearLogs: () => void
   toggleTheme: () => void
+  acceptPairing: (deviceId: string) => void
+  rejectPairing: (deviceId: string) => void
 }
 
 const defaultConfig: BackendConfig = {
@@ -95,6 +105,8 @@ export function BackendProvider({ children }: { children: ReactNode }) {
   const [host, setHost] = useState(window.location.hostname || 'localhost')
   const [port, setPort] = useState('9843')
   const [theme, setTheme] = useState<'dark' | 'light'>('dark')
+  const [devices, setDevices] = useState<DeviceInfo[]>([])
+  const [pairingRequests, setPairingRequests] = useState<DeviceInfo[]>([])
 
   const wsRef = useRef<WebSocket | null>(null)
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -139,6 +151,8 @@ export function BackendProvider({ children }: { children: ReactNode }) {
           send('volume', 'get')
           send('brightness', 'get')
           send('settings', 'get')
+          send('devices', 'get')
+          send('pairing', 'list')
           if (pollRef.current) clearInterval(pollRef.current)
           pollRef.current = setInterval(() => send('sysinfo', 'get'), 4000)
         } else {
@@ -164,6 +178,26 @@ export function BackendProvider({ children }: { children: ReactNode }) {
           break
         case 'settings':
           if (env.payload) setConfig(env.payload)
+          break
+        case 'devices':
+          if (env.payload) setDevices(env.payload)
+          break
+        case 'pairing':
+          if (env.action === 'request') {
+            if (env.payload) {
+              setPairingRequests((prev) => {
+                if (prev.some((r) => r.id === env.payload.id)) return prev
+                return [...prev, env.payload]
+              })
+            }
+          } else if (env.action === 'list') {
+            if (env.payload) setPairingRequests(env.payload)
+          } else if (env.action === 'approved' || env.action === 'rejected') {
+            const devId = env.payload?.deviceId || env.payload
+            if (devId) {
+              setPairingRequests((prev) => prev.filter((r) => r.id !== devId))
+            }
+          }
           break
         case 'clipboard':
           if (env.payload?.text != null) {
@@ -238,6 +272,16 @@ export function BackendProvider({ children }: { children: ReactNode }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  const acceptPairing = useCallback((deviceId: string) => {
+    send('pairing', 'accept', { deviceId })
+    setPairingRequests((prev) => prev.filter((r) => r.id !== deviceId))
+  }, [send])
+
+  const rejectPairing = useCallback((deviceId: string) => {
+    send('pairing', 'reject', { deviceId })
+    setPairingRequests((prev) => prev.filter((r) => r.id !== deviceId))
+  }, [send])
+
   const value: BackendState = {
     status,
     error,
@@ -251,6 +295,8 @@ export function BackendProvider({ children }: { children: ReactNode }) {
     host,
     port,
     theme,
+    devices,
+    pairingRequests,
     setHost,
     setPort,
     connect,
@@ -258,6 +304,8 @@ export function BackendProvider({ children }: { children: ReactNode }) {
     pushClipEvent: (e) => setClipEvents((prev) => [e, ...prev.slice(0, 24)]),
     clearLogs: () => setLogs([]),
     toggleTheme: () => setTheme((t) => (t === 'dark' ? 'light' : 'dark')),
+    acceptPairing,
+    rejectPairing,
   }
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>

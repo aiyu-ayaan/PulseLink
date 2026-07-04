@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/aiyu-ayaan/pulselink/apps/desktop/internal/auth"
 	"github.com/aiyu-ayaan/pulselink/apps/desktop/internal/config"
 	"github.com/aiyu-ayaan/pulselink/apps/desktop/internal/eventbus"
 	"github.com/aiyu-ayaan/pulselink/apps/desktop/internal/logging"
@@ -24,10 +25,12 @@ import (
 	"github.com/aiyu-ayaan/pulselink/apps/desktop/internal/services/apps"
 	"github.com/aiyu-ayaan/pulselink/apps/desktop/internal/services/brightness"
 	"github.com/aiyu-ayaan/pulselink/apps/desktop/internal/services/clipboard"
+	"github.com/aiyu-ayaan/pulselink/apps/desktop/internal/services/devices"
 	"github.com/aiyu-ayaan/pulselink/apps/desktop/internal/services/filetransfer"
 	"github.com/aiyu-ayaan/pulselink/apps/desktop/internal/services/input"
 	"github.com/aiyu-ayaan/pulselink/apps/desktop/internal/services/media"
 	"github.com/aiyu-ayaan/pulselink/apps/desktop/internal/services/notification"
+	"github.com/aiyu-ayaan/pulselink/apps/desktop/internal/services/pairing"
 	"github.com/aiyu-ayaan/pulselink/apps/desktop/internal/services/power"
 	"github.com/aiyu-ayaan/pulselink/apps/desktop/internal/services/settings"
 	"github.com/aiyu-ayaan/pulselink/apps/desktop/internal/services/sysinfo"
@@ -88,8 +91,21 @@ func New(cfgPath string) (*App, error) {
 
 	// Publish presence changes so the future dashboard can react.
 	hub.OnChange = func(deviceIDs []string) {
-		bus.Publish(eventbus.Event{Topic: TopicPresence, Payload: deviceIDs})
+		info := hub.ConnectedDevicesInfo()
+		bus.Publish(eventbus.Event{Topic: TopicPresence, Payload: info})
 	}
+
+	// Forward presence/devices changes from the eventbus to connected devices.
+	bus.Subscribe(TopicPresence, func(ev eventbus.Event) {
+		payload, ok := ev.Payload.([]transport.DeviceInfo)
+		if !ok {
+			return
+		}
+		env, err := protocol.NewEvent("devices", "changed", payload)
+		if err == nil {
+			hub.Broadcast(env)
+		}
+	})
 
 	// Forward clipboard changes from the eventbus to connected devices.
 	bus.Subscribe("clipboard.changed", func(ev eventbus.Event) {
@@ -101,6 +117,51 @@ func New(cfgPath string) (*App, error) {
 		if err == nil {
 			hub.Broadcast(env)
 		}
+	})
+
+	// Forward volume changes from the eventbus to connected devices.
+	bus.Subscribe("volume.changed", func(ev eventbus.Event) {
+		payload, ok := ev.Payload.(volume.VolumeState)
+		if !ok {
+			return
+		}
+		env, err := protocol.NewEvent("volume", "changed", payload)
+		if err == nil {
+			hub.Broadcast(env)
+		}
+	})
+
+	// Forward pairing requests from the eventbus to connected devices.
+	bus.Subscribe("pairing.request", func(ev eventbus.Event) {
+		payload, ok := ev.Payload.(transport.DeviceInfo)
+		if !ok {
+			return
+		}
+		env, err := protocol.NewEvent("pairing", "request", payload)
+		if err == nil {
+			hub.Broadcast(env)
+		}
+	})
+
+	// Forward pairing approvals to the specific device.
+	bus.Subscribe("pairing.approved", func(ev eventbus.Event) {
+		deviceID, ok := ev.Payload.(string)
+		if !ok {
+			return
+		}
+		env, err := protocol.NewEvent("pairing", "approved", nil)
+		if err == nil {
+			hub.SendToDevice(deviceID, env)
+		}
+	})
+
+	// Handle pairing rejections by disconnecting the device.
+	bus.Subscribe("pairing.rejected", func(ev eventbus.Event) {
+		deviceID, ok := ev.Payload.(string)
+		if !ok {
+			return
+		}
+		hub.DisconnectDevice(deviceID)
 	})
 
 	if err := a.buildServer(); err != nil {
@@ -127,8 +188,9 @@ func (a *App) buildServer() error {
 		scfg.TLS = tc
 	}
 
-	// AllowAll is a placeholder; the auth package replaces it in the next chunk.
-	a.server = transport.NewServer(scfg, a.log, a.hub, a.router, transport.AllowAll{})
+	// Use the real database-backed Authenticator
+	authSvc := auth.New(a.store, a.bus)
+	a.server = transport.NewServer(scfg, a.log, a.hub, a.router, authSvc)
 	return nil
 }
 
@@ -142,6 +204,14 @@ func (a *App) registerServices() {
 	volumeSvc := volume.New(a.log, a.bus)
 	a.registry.Register(volumeSvc)
 	a.router.Register(volumeSvc.Name(), volumeSvc)
+
+	devicesSvc := devices.New(a.log, a.bus, a.hub)
+	a.registry.Register(devicesSvc)
+	a.router.Register(devicesSvc.Name(), devicesSvc)
+
+	pairingSvc := pairing.New(a.log, a.bus, a.store, a.hub)
+	a.registry.Register(pairingSvc)
+	a.router.Register(pairingSvc.Name(), pairingSvc)
 
 	brightnessSvc := brightness.New(a.log, a.bus)
 	a.registry.Register(brightnessSvc)
