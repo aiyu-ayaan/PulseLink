@@ -1,16 +1,109 @@
 @import "tailwindcss";
-@import url('https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600;700&family=Fira+Sans:wght@300;400;500;600;700&display=swap');
 
-@theme {
-  --color-primary: #0F172A;
-  --color-secondary: #1E293B;
-  --color-accent: #22C55E;
-  --color-background-oled: #020617;
-  --color-card-dark: rgba(15, 23, 42, 0.45);
-  --color-card-border: rgba(255, 255, 255, 0.08);
-  
-  --font-mono: "Fira Code", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  --font-sans: "Fira Sans", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+/*
+  PulseLink desktop — Windows 11 Fluent / Mica design system.
+  Segoe UI Variable is the real Windows system font; we fall back gracefully.
+  Semantic tokens live in :root and flip for light mode via [data-theme].
+  Tailwind @theme maps color-* utilities onto those tokens so bg-accent etc.
+  react to the theme automatically.
+*/
+
+:root {
+  color-scheme: dark;
+
+  /* Mica surfaces (dark) */
+  --bg: #1b1b1f;
+  --bg-tint-a: rgba(96, 205, 255, 0.06);
+  --bg-tint-b: rgba(160, 120, 255, 0.05);
+  --sidebar: rgba(32, 32, 36, 0.72);
+  --card: rgba(44, 44, 50, 0.62);
+  --card-hover: rgba(56, 56, 64, 0.72);
+  --control: rgba(255, 255, 255, 0.06);
+  --control-hover: rgba(255, 255, 255, 0.09);
+  --stroke: rgba(255, 255, 255, 0.08);
+  --stroke-strong: rgba(255, 255, 255, 0.14);
+
+  /* Text */
+  --text: #ffffff;
+  --text-secondary: rgba(255, 255, 255, 0.78);
+  --text-tertiary: rgba(255, 255, 255, 0.52);
+
+  /* Windows accent (light-blue variant reads well on dark) */
+  --accent: #60cdff;
+  --accent-hover: #4cc2ff;
+  --accent-soft: rgba(96, 205, 255, 0.14);
+  --on-accent: #002133;
+
+  /* Status */
+  --ok: #6ccf8e;
+  --warn: #f6c453;
+  --danger: #f16d6d;
+  --danger-soft: rgba(241, 109, 109, 0.14);
+
+  --shadow-card: 0 2px 8px rgba(0, 0, 0, 0.28);
+  --shadow-flyout: 0 16px 40px rgba(0, 0, 0, 0.45);
+  --radius: 8px;
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+
+  --bg: #f3f3f3;
+  --bg-tint-a: rgba(0, 95, 184, 0.05);
+  --bg-tint-b: rgba(120, 90, 200, 0.04);
+  --sidebar: rgba(251, 251, 253, 0.75);
+  --card: rgba(255, 255, 255, 0.72);
+  --card-hover: rgba(255, 255, 255, 0.9);
+  --control: rgba(0, 0, 0, 0.04);
+  --control-hover: rgba(0, 0, 0, 0.07);
+  --stroke: rgba(0, 0, 0, 0.08);
+  --stroke-strong: rgba(0, 0, 0, 0.14);
+
+  --text: #1a1a1a;
+  --text-secondary: rgba(0, 0, 0, 0.7);
+  --text-tertiary: rgba(0, 0, 0, 0.5);
+
+  --accent: #005fb8;
+  --accent-hover: #0a4c94;
+  --accent-soft: rgba(0, 95, 184, 0.1);
+  --on-accent: #ffffff;
+
+  --ok: #2f8f4e;
+  --warn: #9a6700;
+  --danger: #c42b1c;
+  --danger-soft: rgba(196, 43, 28, 0.1);
+
+  --shadow-card: 0 2px 6px rgba(0, 0, 0, 0.1);
+  --shadow-flyout: 0 16px 40px rgba(0, 0, 0, 0.18);
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-sidebar: var(--sidebar);
+  --color-card: var(--card);
+  --color-card-hover: var(--card-hover);
+  --color-control: var(--control);
+  --color-control-hover: var(--control-hover);
+  --color-stroke: var(--stroke);
+  --color-stroke-strong: var(--stroke-strong);
+  --color-text: var(--text);
+  --color-text-secondary: var(--text-secondary);
+  --color-text-tertiary: var(--text-tertiary);
+  --color-accent: var(--accent);
+  --color-accent-hover: var(--accent-hover);
+  --color-accent-soft: var(--accent-soft);
+  --color-on-accent: var(--on-accent);
+  --color-ok: var(--ok);
+  --color-warn: var(--warn);
+  --color-danger: var(--danger);
+  --color-danger-soft: var(--danger-soft);
+
+  --font-sans: "Segoe UI Variable Text", "Segoe UI Variable", "Segoe UI",
+    system-ui, -apple-system, BlinkMacSystemFont, Roboto, sans-serif;
+  --font-display: "Segoe UI Variable Display", "Segoe UI Variable", "Segoe UI",
+    system-ui, sans-serif;
+  --font-mono: "Cascadia Code", "Cascadia Mono", ui-monospace, Consolas,
+    "SF Mono", Menlo, monospace;
 }
 
 html, body, #root {
@@ -18,67 +111,58 @@ html, body, #root {
   padding: 0;
   width: 100%;
   height: 100%;
-  background-color: #020617; /* Deep midnight background */
-  color: #F8FAFC; /* Slate-50 text */
+  overflow: hidden;
   font-family: var(--font-sans);
-  overflow-x: hidden;
+  color: var(--text);
+  /* Faux-Mica: a quiet neutral base with two soft accent tints bleeding in,
+     mimicking the desktop wallpaper showing through a real Mica window. */
+  background-color: var(--bg);
+  background-image:
+    radial-gradient(120% 90% at 12% 0%, var(--bg-tint-a), transparent 55%),
+    radial-gradient(120% 90% at 100% 15%, var(--bg-tint-b), transparent 50%);
+  background-attachment: fixed;
 }
 
-/* Custom Scrollbar */
-::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
-}
-::-webkit-scrollbar-track {
-  background: rgba(15, 23, 42, 0.1);
-}
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.1);
-  border-radius: 3px;
+  background: var(--stroke-strong);
+  border-radius: 6px;
+  border: 3px solid transparent;
+  background-clip: content-box;
 }
-::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.2);
+::-webkit-scrollbar-thumb:hover { background: var(--text-tertiary); background-clip: content-box; }
+
+/* Fluent range slider */
+input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 4px;
+  border-radius: 999px;
+  background: var(--stroke-strong);
+  outline: none;
+  cursor: pointer;
+}
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: 5px solid var(--bg);
+  box-shadow: 0 0 0 1px var(--stroke-strong);
+  transition: transform 0.12s ease;
+}
+input[type="range"]::-webkit-slider-thumb:hover { transform: scale(1.15); }
+input[type="range"]::-webkit-slider-thumb:active { transform: scale(0.9); }
+
+*:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 4px;
 }
 
-/* Mica / Acrylic Effect */
-.glass-panel {
-  background: rgba(15, 23, 42, 0.65);
-  backdrop-filter: blur(12px) saturate(125%);
-  border: 1px solid rgba(255, 255, 255, 0.07);
-  box-shadow: 0 4px 30px rgba(0, 0, 0, 0.5);
-}
-
-.glass-card {
-  background: rgba(30, 41, 59, 0.35);
-  backdrop-filter: blur(8px);
-  border: 1px solid rgba(255, 255, 255, 0.05);
-  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
-}
-
-.glass-card:hover {
-  border-color: rgba(34, 197, 94, 0.3); /* green-accent */
-  background: rgba(30, 41, 59, 0.5);
-  box-shadow: 0 0 15px rgba(34, 197, 94, 0.1);
-  transform: translateY(-2px);
-}
-
-/* Pulsing accent status dot */
-.pulse-green {
-  box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.7);
-  animation: pulse-green-anim 2s infinite;
-}
-
-@keyframes pulse-green-anim {
-  0% {
-    transform: scale(0.95);
-    box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.7);
-  }
-  70% {
-    transform: scale(1);
-    box-shadow: 0 0 0 8px rgba(34, 197, 94, 0);
-  }
-  100% {
-    transform: scale(0.95);
-    box-shadow: 0 0 0 0 rgba(34, 197, 94, 0);
-  }
+@media (prefers-reduced-motion: reduce) {
+  * { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
 }
