@@ -17,6 +17,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
@@ -71,6 +72,7 @@ class PulseClient(private val scope: CoroutineScope) {
     private var lastToken: String = ""
 
     companion object {
+        const val CONNECT_ATTEMPT_TIMEOUT_MS = 5_000L
         const val PAIRING_TIMEOUT_MS = 60_000L
     }
 
@@ -85,22 +87,30 @@ class PulseClient(private val scope: CoroutineScope) {
         _error.value = null
         pump = scope.launch {
             try {
-                // Try wss first
+                // Desktop MVP serves plain ws:// by default. Try that first so
+                // Android does not sit in a failed TLS attempt before pairing.
+                val wsUrl = "ws://$host:$port/ws"
+                val wssUrl = "wss://$host:$port/ws"
+                var lastFailure: Throwable? = null
                 var sessionResult = runCatching {
-                    http.webSocketSession {
-                        url("wss://$host:$port/ws")
+                    withTimeout(CONNECT_ATTEMPT_TIMEOUT_MS) {
+                        http.webSocketSession { url(wsUrl) }
                     }
-                }
+                }.onFailure { lastFailure = it }
                 if (sessionResult.isFailure) {
-                    // Fallback to ws
                     sessionResult = runCatching {
-                        http.webSocketSession {
-                            url("ws://$host:$port/ws")
+                        withTimeout(CONNECT_ATTEMPT_TIMEOUT_MS) {
+                            http.webSocketSession { url(wssUrl) }
                         }
-                    }
+                    }.onFailure { lastFailure = it }
                 }
 
-                val s = sessionResult.getOrThrow()
+                val s = sessionResult.getOrElse {
+                    throw IllegalStateException(
+                        "Unable to connect to $host:$port over ws or wss: ${lastFailure?.message ?: it.message ?: it.javaClass.simpleName}",
+                        it,
+                    )
+                }
                 session = s
                 _state.value = ConnState.Connected
                 val hello = ClientHello(
