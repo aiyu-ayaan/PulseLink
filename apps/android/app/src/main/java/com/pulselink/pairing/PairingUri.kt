@@ -2,9 +2,15 @@ package com.pulselink.pairing
 
 import android.net.Uri
 
-// Parses pulselink://pair?host=&port=&token=&name= produced by the desktop
+// Parses pulselink://pair?host=&port=&token=&name=&scheme= produced by the desktop
 // Devices panel QR code. Returns null for anything that isn't a valid pair URI.
-data class PairInfo(val host: String, val port: Int, val token: String, val name: String)
+data class PairInfo(
+    val host: String,
+    val port: Int,
+    val token: String,
+    val name: String,
+    val scheme: String = "ws",
+)
 
 fun parsePairUri(raw: String): PairInfo? {
     val uri = runCatching { Uri.parse(raw.trim()) }.getOrNull() ?: return null
@@ -16,5 +22,6 @@ fun parsePairUri(raw: String): PairInfo? {
         port = port,
         token = uri.getQueryParameter("token").orEmpty(),
         name = uri.getQueryParameter("name")?.takeIf { it.isNotBlank() } ?: host,
+        scheme = uri.getQueryParameter("scheme")?.takeIf { it == "ws" || it == "wss" } ?: "ws",
     )
 }

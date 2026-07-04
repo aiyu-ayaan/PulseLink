@@ -22,12 +22,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     val lastHost get() = prefs.getString("host", "") ?: ""
     val lastPort get() = prefs.getInt("port", 9843)
 
-    fun connect(host: String, port: Int, name: String = "Android", token: String = "") {
+    fun connect(host: String, port: Int, name: String = "Android", token: String = "", scheme: String = "ws") {
         prefs.edit().putString("host", host).putInt("port", port).apply()
-        client.connect(host, port, android.os.Build.MODEL ?: name, token)
+        client.connect(host, port, android.os.Build.MODEL ?: name, token, scheme)
     }
 
-    fun connectPaired(p: PairInfo) = connect(p.host, p.port, p.name, p.token)
+    fun connectPaired(p: PairInfo) = connect(p.host, p.port, p.name, p.token, p.scheme)
 
     fun disconnect() = client.disconnect()
 

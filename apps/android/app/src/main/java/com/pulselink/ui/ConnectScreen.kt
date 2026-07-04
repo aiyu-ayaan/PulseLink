@@ -31,7 +31,7 @@ import com.google.accompanist.permissions.isGranted
 import com.google.accompanist.permissions.rememberPermissionState
 import com.pulselink.pairing.parsePairUri
 
-// Manual host:port entry + QR scan. onConnect(host, port, token, name).
+// Manual host:port entry + QR scan. onConnect(host, port, token, name, scheme).
 @OptIn(ExperimentalPermissionsApi::class)
 @Composable
 fun ConnectScreen(
@@ -39,7 +39,7 @@ fun ConnectScreen(
     initialPort: Int,
     error: String?,
     connecting: Boolean,
-    onConnect: (host: String, port: Int, token: String, name: String) -> Unit,
+    onConnect: (host: String, port: Int, token: String, name: String, scheme: String) -> Unit,
 ) {
     var host by remember { mutableStateOf(initialHost) }
     var port by remember { mutableStateOf(initialPort.toString()) }
@@ -53,7 +53,7 @@ fun ConnectScreen(
             parsePairUri(raw)?.let {
                 handled = true
                 scanning = false
-                onConnect(it.host, it.port, it.token, it.name)
+                onConnect(it.host, it.port, it.token, it.name, it.scheme)
             }
         }
         return
@@ -87,7 +87,7 @@ fun ConnectScreen(
                     Button(
                         onClick = {
                             handled = false
-                            onConnect(host.trim(), port.toIntOrNull() ?: 9843, "", "Android")
+                            onConnect(host.trim(), port.toIntOrNull() ?: 9843, "", "Android", "ws")
                         },
                         enabled = !connecting && host.isNotBlank() && port.isNotBlank(),
                         modifier = Modifier.weight(1f),

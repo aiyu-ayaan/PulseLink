@@ -89,7 +89,7 @@ class MainActivity : ComponentActivity() {
                                 ConnectScreen(
                                     initialHost = vm.lastHost, initialPort = vm.lastPort,
                                     error = error, connecting = state == ConnState.Connecting,
-                                    onConnect = { host, port, token, name -> vm.connect(host, port, name, token) },
+                                    onConnect = { host, port, token, name, scheme -> vm.connect(host, port, name, token, scheme) },
                                 )
                             }
                         }

@@ -70,17 +70,19 @@ class PulseClient(private val scope: CoroutineScope) {
     private var lastPort: Int = 9843
     private var lastDeviceName: String = ""
     private var lastToken: String = ""
+    private var lastScheme: String = "ws"
 
     companion object {
         const val CONNECT_ATTEMPT_TIMEOUT_MS = 5_000L
         const val PAIRING_TIMEOUT_MS = 60_000L
     }
 
-    fun connect(host: String, port: Int, deviceName: String, token: String) {
+    fun connect(host: String, port: Int, deviceName: String, token: String, preferredScheme: String = "ws") {
         this.lastHost = host
         this.lastPort = port
         this.lastDeviceName = deviceName
         this.lastToken = token
+        this.lastScheme = preferredScheme
 
         disconnect()
         _state.value = ConnState.Connecting
@@ -89,18 +91,20 @@ class PulseClient(private val scope: CoroutineScope) {
             try {
                 // Desktop MVP serves plain ws:// by default. Try that first so
                 // Android does not sit in a failed TLS attempt before pairing.
-                val wsUrl = "ws://$host:$port/ws"
-                val wssUrl = "wss://$host:$port/ws"
+                val firstScheme = if (preferredScheme == "wss") "wss" else "ws"
+                val secondScheme = if (firstScheme == "wss") "ws" else "wss"
+                val firstUrl = "$firstScheme://$host:$port/ws"
+                val secondUrl = "$secondScheme://$host:$port/ws"
                 var lastFailure: Throwable? = null
                 var sessionResult = runCatching {
                     withTimeout(CONNECT_ATTEMPT_TIMEOUT_MS) {
-                        http.webSocketSession { url(wsUrl) }
+                        http.webSocketSession { url(firstUrl) }
                     }
                 }.onFailure { lastFailure = it }
                 if (sessionResult.isFailure) {
                     sessionResult = runCatching {
                         withTimeout(CONNECT_ATTEMPT_TIMEOUT_MS) {
-                            http.webSocketSession { url(wssUrl) }
+                            http.webSocketSession { url(secondUrl) }
                         }
                     }.onFailure { lastFailure = it }
                 }
@@ -206,7 +210,7 @@ class PulseClient(private val scope: CoroutineScope) {
                 if (env.action == "approved") {
                     pairingTimeout?.cancel(); pairingTimeout = null
                     scope.launch {
-                        connect(lastHost, lastPort, lastDeviceName, lastToken)
+                        connect(lastHost, lastPort, lastDeviceName, lastToken, lastScheme)
                     }
                 } else if (env.action == "rejected") {
                     pairingTimeout?.cancel(); pairingTimeout = null
