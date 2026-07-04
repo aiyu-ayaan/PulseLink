@@ -41,8 +41,8 @@ fun ConnectScreen(
     connecting: Boolean,
     onConnect: (host: String, port: Int, token: String, name: String, scheme: String) -> Unit,
 ) {
-    var host by remember { mutableStateOf(initialHost) }
-    var port by remember { mutableStateOf(initialPort.toString()) }
+    var host by remember(initialHost) { mutableStateOf(initialHost) }
+    var port by remember(initialPort) { mutableStateOf(initialPort.toString()) }
     var scanning by remember { mutableStateOf(false) }
     var handled by remember { mutableStateOf(false) }
     val camPermission = rememberPermissionState(Manifest.permission.CAMERA)
@@ -111,3 +111,53 @@ fun ConnectScreen(
         }
     }
 }
+
+@Composable
+fun ConnectingScreen(
+    host: String,
+    port: Int,
+    error: String?,
+    onCancel: () -> Unit,
+    onRetry: () -> Unit,
+) {
+    Column(
+        modifier = Modifier.fillMaxSize().padding(24.dp),
+        verticalArrangement = Arrangement.Center,
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        androidx.compose.material3.CircularProgressIndicator(
+            color = androidx.compose.material3.MaterialTheme.colorScheme.primary,
+            strokeWidth = 3.dp,
+        )
+        Spacer(Modifier.height(24.dp))
+        Text(
+            text = "Connecting to PC",
+            style = androidx.compose.material3.MaterialTheme.typography.headlineSmall,
+            fontWeight = FontWeight.Bold
+        )
+        Spacer(Modifier.height(8.dp))
+        Text(
+            text = "$host:$port",
+            style = androidx.compose.material3.MaterialTheme.typography.bodyMedium,
+            color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        error?.let {
+            Spacer(Modifier.height(16.dp))
+            Text(
+                text = it,
+                color = androidx.compose.material3.MaterialTheme.colorScheme.error,
+                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                style = androidx.compose.material3.MaterialTheme.typography.bodySmall
+            )
+            Spacer(Modifier.height(16.dp))
+            Button(onClick = onRetry) {
+                Text("Retry")
+            }
+        }
+        Spacer(Modifier.height(24.dp))
+        OutlinedButton(onClick = onCancel) {
+            Text("Use Different Server")
+        }
+    }
+}
+
