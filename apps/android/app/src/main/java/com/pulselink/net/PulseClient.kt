@@ -2,6 +2,7 @@ package com.pulselink.net
 
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.cio.CIO
+import io.ktor.client.plugins.HttpTimeout
 import io.ktor.client.plugins.websocket.WebSockets
 import io.ktor.client.plugins.websocket.webSocketSession
 import io.ktor.client.request.url
@@ -31,11 +32,12 @@ class PulseClient(private val scope: CoroutineScope) {
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
     private val http = HttpClient(CIO) {
         install(WebSockets)
+        install(HttpTimeout) {
+            connectTimeoutMillis = 5000L
+            requestTimeoutMillis = 5000L
+            socketTimeoutMillis = 5000L
+        }
         engine {
-            endpoint {
-                connectTimeout = 5000L
-                connectAttempts = 1
-            }
             https {
                 trustManager = object : javax.net.ssl.X509TrustManager {
                     override fun checkClientTrusted(chain: Array<out java.security.cert.X509Certificate>?, authType: String?) {}
