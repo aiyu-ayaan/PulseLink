@@ -57,11 +57,16 @@ class PulseClient(private val scope: CoroutineScope) {
     private var session: io.ktor.client.plugins.websocket.DefaultClientWebSocketSession? = null
     private var pump: Job? = null
     private var poll: Job? = null
+    private var pairingTimeout: Job? = null
 
     private var lastHost: String = ""
     private var lastPort: Int = 9843
     private var lastDeviceName: String = ""
     private var lastToken: String = ""
+
+    companion object {
+        const val PAIRING_TIMEOUT_MS = 60_000L
+    }
 
     fun connect(host: String, port: Int, deviceName: String, token: String) {
         this.lastHost = host
@@ -110,6 +115,7 @@ class PulseClient(private val scope: CoroutineScope) {
     }
 
     fun disconnect() {
+        pairingTimeout?.cancel(); pairingTimeout = null
         poll?.cancel(); poll = null
         pump?.cancel(); pump = null
         val s = session; session = null
@@ -152,6 +158,14 @@ class PulseClient(private val scope: CoroutineScope) {
                     }
                 } else if (w.capabilities.contains("pairing")) {
                     _state.value = ConnState.PairingPending
+                    pairingTimeout?.cancel()
+                    pairingTimeout = scope.launch {
+                        kotlinx.coroutines.delay(PAIRING_TIMEOUT_MS)
+                        if (_state.value == ConnState.PairingPending) {
+                            _error.value = "Pairing timed out after 60 seconds — no one accepted on the PC"
+                            disconnect()
+                        }
+                    }
                 } else {
                     _error.value = "Unauthorized: no capabilities negotiated"
                     _state.value = ConnState.Disconnected
@@ -174,10 +188,12 @@ class PulseClient(private val scope: CoroutineScope) {
             }
             "pairing" -> {
                 if (env.action == "approved") {
+                    pairingTimeout?.cancel(); pairingTimeout = null
                     scope.launch {
                         connect(lastHost, lastPort, lastDeviceName, lastToken)
                     }
                 } else if (env.action == "rejected") {
+                    pairingTimeout?.cancel(); pairingTimeout = null
                     _error.value = "Pairing request was rejected by the PC"
                     disconnect()
                 }

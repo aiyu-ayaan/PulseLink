@@ -57,7 +57,10 @@ class MainActivity : ComponentActivity() {
                                     verticalArrangement = Arrangement.Center,
                                     horizontalAlignment = Alignment.CenterHorizontally
                                 ) {
-                                    CircularProgressIndicator(color = androidx.compose.material3.MaterialTheme.colorScheme.primary)
+                                    CircularProgressIndicator(
+                                        color = androidx.compose.material3.MaterialTheme.colorScheme.primary,
+                                        strokeWidth = 3.dp,
+                                    )
                                     Spacer(Modifier.height(24.dp))
                                     Text(
                                         text = "Pairing Pending",
@@ -69,6 +72,13 @@ class MainActivity : ComponentActivity() {
                                         text = "Please click Accept on your PC to authorize this device.",
                                         textAlign = TextAlign.Center,
                                         style = androidx.compose.material3.MaterialTheme.typography.bodyMedium
+                                    )
+                                    Spacer(Modifier.height(4.dp))
+                                    Text(
+                                        text = "This request will auto-cancel after 60 seconds.",
+                                        textAlign = TextAlign.Center,
+                                        style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
+                                        color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
                                     Spacer(Modifier.height(24.dp))
                                     Button(onClick = vm::disconnect) {
