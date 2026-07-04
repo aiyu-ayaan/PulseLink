@@ -70,7 +70,7 @@ func main() {
 		},
 	})
 
-	wapp.NewWebviewWindowWithOptions(application.WebviewWindowOptions{
+	wapp.Window.NewWithOptions(application.WebviewWindowOptions{
 		Title:            "PulseLink",
 		Width:            1280,
 		Height:           820,
