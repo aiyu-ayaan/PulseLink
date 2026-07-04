@@ -90,6 +90,7 @@ const Ctx = createContext<BackendState | null>(null)
 const CLIENT_CAPS = [
   'media', 'volume', 'brightness', 'clipboard', 'power', 'sysinfo',
   'apps', 'input', 'notification', 'filetransfer', 'settings',
+  'devices', 'pairing',
 ]
 
 export function BackendProvider({ children }: { children: ReactNode }) {
