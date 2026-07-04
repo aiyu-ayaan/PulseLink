@@ -54,7 +54,15 @@ data class SysInfo(
 data class Volume(val level: Int = 0, val muted: Boolean = false)
 
 @Serializable
-data class Brightness(val internal: Int = 50, val external: Int = 80)
+data class MonitorBrightness(
+    val id: String = "",
+    val name: String = "",
+    val level: Int = 100,
+    val method: String = "gamma",
+)
+
+@Serializable
+data class BrightnessState(val monitors: List<MonitorBrightness> = emptyList())
 
 @Serializable
 data class MediaState(

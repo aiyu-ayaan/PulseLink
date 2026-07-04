@@ -41,10 +41,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.pulselink.net.SysInfo
 import com.pulselink.net.Volume
-import com.pulselink.net.Brightness
+import com.pulselink.net.BrightnessState
 import com.pulselink.net.MediaState
 import androidx.compose.material.icons.filled.Pause
-import androidx.compose.material.icons.filled.Tv
 import androidx.compose.material.icons.filled.BrightnessMedium
 
 @Composable
@@ -52,7 +51,7 @@ fun ControlScreen(
     sysInfo: SysInfo?,
     volume: Volume,
     mediaState: MediaState,
-    brightness: Brightness,
+    brightness: BrightnessState,
     onMedia: (String) -> Unit,
     onVolume: (Int) -> Unit,
     onMute: () -> Unit,
@@ -184,39 +183,44 @@ private fun VolumeCard(volume: Volume, onVolume: (Int) -> Unit, onMute: () -> Un
 }
 
 @Composable
-private fun BrightnessCard(brightness: Brightness, onBrightness: (String, Int) -> Unit) = SectionCard("Brightness") {
-    var internalPos by remember(brightness.internal) { mutableFloatStateOf(brightness.internal.toFloat()) }
-    var externalPos by remember(brightness.external) { mutableFloatStateOf(brightness.external.toFloat()) }
-
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Icon(Icons.Filled.Tv, "Internal")
-            Text("Internal Display", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
-            Text("${internalPos.toInt()}%", modifier = Modifier.width(44.dp), textAlign = androidx.compose.ui.text.style.TextAlign.End)
-        }
-        Slider(
-            value = internalPos,
-            onValueChange = { internalPos = it },
-            onValueChangeFinished = { onBrightness("internal", internalPos.toInt()) },
-            valueRange = 0f..100f,
-            modifier = Modifier.fillMaxWidth()
-        )
-
-        Spacer(Modifier.height(8.dp))
-
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Icon(Icons.Filled.BrightnessMedium, "External")
-            Text("External Display", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
-            Text("${externalPos.toInt()}%", modifier = Modifier.width(44.dp), textAlign = androidx.compose.ui.text.style.TextAlign.End)
-        }
-        Slider(
-            value = externalPos,
-            onValueChange = { externalPos = it },
-            onValueChangeFinished = { onBrightness("external", externalPos.toInt()) },
-            valueRange = 0f..100f,
-            modifier = Modifier.fillMaxWidth()
-        )
+private fun BrightnessCard(brightness: BrightnessState, onBrightness: (String, Int) -> Unit) = SectionCard("Brightness") {
+    if (brightness.monitors.isEmpty()) {
+        Text("No displays detected", style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant)
+        return@SectionCard
     }
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        brightness.monitors.forEachIndexed { index, monitor ->
+            MonitorSlider(
+                monitor = monitor,
+                onBrightness = onBrightness,
+            )
+            if (index < brightness.monitors.lastIndex) {
+                Spacer(Modifier.height(4.dp))
+            }
+        }
+    }
+}
+
+@Composable
+private fun MonitorSlider(
+    monitor: com.pulselink.net.MonitorBrightness,
+    onBrightness: (String, Int) -> Unit,
+) {
+    var pos by remember(monitor.level) { mutableFloatStateOf(monitor.level.toFloat()) }
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Icon(Icons.Filled.BrightnessMedium, monitor.name)
+        Text(monitor.name, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+        Text("${pos.toInt()}%", modifier = Modifier.width(44.dp),
+            textAlign = androidx.compose.ui.text.style.TextAlign.End)
+    }
+    Slider(
+        value = pos,
+        onValueChange = { pos = it },
+        onValueChangeFinished = { onBrightness(monitor.id, pos.toInt()) },
+        valueRange = 0f..100f,
+        modifier = Modifier.fillMaxWidth()
+    )
 }
 
 @Composable

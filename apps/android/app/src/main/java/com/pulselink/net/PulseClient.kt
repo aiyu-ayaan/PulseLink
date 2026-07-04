@@ -60,8 +60,8 @@ class PulseClient(private val scope: CoroutineScope) {
     private val _volume = MutableStateFlow(Volume())
     val volume: StateFlow<Volume> = _volume.asStateFlow()
 
-    private val _brightness = MutableStateFlow(Brightness())
-    val brightness: StateFlow<Brightness> = _brightness.asStateFlow()
+    private val _brightness = MutableStateFlow(BrightnessState())
+    val brightness: StateFlow<BrightnessState> = _brightness.asStateFlow()
 
     private val _mediaState = MutableStateFlow(MediaState())
     val mediaState: StateFlow<MediaState> = _mediaState.asStateFlow()
@@ -196,8 +196,8 @@ class PulseClient(private val scope: CoroutineScope) {
     fun volumeUp() = send("volume", "up")
     fun volumeDown() = send("volume", "down")
     fun toggleMute() = send("volume", "mute")
-    fun setBrightness(type: String, level: Int) = send("brightness", "set", buildJsonObject {
-        put("type", type)
+    fun setBrightness(monitorId: String, level: Int) = send("brightness", "set", buildJsonObject {
+        put("monitor", monitorId)
         put("level", level)
     })
 
@@ -222,8 +222,8 @@ class PulseClient(private val scope: CoroutineScope) {
                 val hasFullAccess = w.capabilities.contains("sysinfo") || w.capabilities.contains("volume")
                 if (hasFullAccess) {
                     _state.value = ConnState.Ready
-                    Log.d("PulseClient", "Connection ready. Querying sysinfo, volume, and media.")
-                    send("sysinfo", "get"); send("volume", "get"); send("media", "get")
+                    Log.d("PulseClient", "Connection ready. Querying sysinfo, volume, media, and brightness.")
+                    send("sysinfo", "get"); send("volume", "get"); send("media", "get"); send("brightness", "get")
                     poll = scope.launch(Dispatchers.IO) {
                         while (isActive) {
                             kotlinx.coroutines.delay(4000)
@@ -273,6 +273,13 @@ class PulseClient(private val scope: CoroutineScope) {
                 runCatching { json.decodeFromJsonElement(Volume.serializer(), p) }.getOrNull()?.let {
                     Log.d("PulseClient", "Updated volume: $it")
                     _volume.value = it
+                }
+            }
+            "brightness" -> {
+                val p = env.payload ?: return
+                runCatching { json.decodeFromJsonElement(BrightnessState.serializer(), p) }.getOrNull()?.let {
+                    Log.d("PulseClient", "Updated brightness: $it")
+                    _brightness.value = it
                 }
             }
             "media" -> {
