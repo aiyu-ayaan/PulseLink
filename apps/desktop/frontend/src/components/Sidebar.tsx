@@ -25,8 +25,9 @@ export function Sidebar({
   active: string
   onSelect: (id: string) => void
 }) {
-  const { status, connect } = useBackend()
+  const { status, pairingRequests, connect } = useBackend()
   const meta = statusMeta[status]
+  const pendingCount = pairingRequests.length
 
   return (
     <aside className="flex w-60 shrink-0 flex-col border-r border-stroke bg-sidebar backdrop-blur-2xl">
@@ -42,6 +43,7 @@ export function Sidebar({
         {items.map((item) => {
           const Icon = item.icon
           const isActive = active === item.id
+          const showBadge = item.id === 'devices' && pendingCount > 0
           return (
             <button
               key={item.id}
@@ -58,6 +60,11 @@ export function Sidebar({
               )}
               <Icon size={18} strokeWidth={isActive ? 2.2 : 1.8} />
               <span>{item.label}</span>
+              {showBadge && (
+                <span className="ml-auto flex h-5 min-w-[20px] items-center justify-center rounded-full bg-accent px-1.5 text-[11px] font-bold text-on-accent">
+                  {pendingCount}
+                </span>
+              )}
             </button>
           )
         })}

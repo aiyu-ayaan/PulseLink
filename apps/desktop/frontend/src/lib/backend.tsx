@@ -50,6 +50,12 @@ export interface ClipEvent {
   source: 'pc' | 'you'
 }
 
+export interface PairingToast {
+  show: boolean
+  deviceName: string
+  deviceId: string
+}
+
 interface BackendState {
   status: Status
   error: string | null
@@ -65,6 +71,8 @@ interface BackendState {
   theme: 'dark' | 'light'
   devices: DeviceInfo[]
   pairingRequests: DeviceInfo[]
+  pairingToast: PairingToast
+  dismissPairingToast: () => void
   setHost: (v: string) => void
   setPort: (v: string) => void
   connect: () => void
@@ -108,9 +116,11 @@ export function BackendProvider({ children }: { children: ReactNode }) {
   const [theme, setTheme] = useState<'dark' | 'light'>('dark')
   const [devices, setDevices] = useState<DeviceInfo[]>([])
   const [pairingRequests, setPairingRequests] = useState<DeviceInfo[]>([])
+  const [pairingToast, setPairingToast] = useState<PairingToast>({ show: false, deviceName: '', deviceId: '' })
 
   const wsRef = useRef<WebSocket | null>(null)
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const pairingPollRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   const log = useCallback((msg: string) => {
     const ts = new Date().toLocaleTimeString()
@@ -153,9 +163,11 @@ export function BackendProvider({ children }: { children: ReactNode }) {
           send('brightness', 'get')
           send('settings', 'get')
           send('devices', 'get')
-          send('pairing', 'list')
+          send('pairing', 'pending')
           if (pollRef.current) clearInterval(pollRef.current)
           pollRef.current = setInterval(() => send('sysinfo', 'get'), 4000)
+          if (pairingPollRef.current) clearInterval(pairingPollRef.current)
+          pairingPollRef.current = setInterval(() => send('pairing', 'pending'), 5000)
         } else {
           setStatus('disconnected')
           setError(`Handshake rejected: ${env.payload?.reason || 'unauthorized'}`)
@@ -190,6 +202,11 @@ export function BackendProvider({ children }: { children: ReactNode }) {
                 if (prev.some((r) => r.id === env.payload.id)) return prev
                 return [...prev, env.payload]
               })
+              setPairingToast({ show: true, deviceName: env.payload.name, deviceId: env.payload.id })
+            }
+          } else if (env.action === 'pending') {
+            if (env.payload?.devices) {
+              setPairingRequests(env.payload.devices)
             }
           } else if (env.action === 'list') {
             if (env.payload) setPairingRequests(env.payload)
@@ -256,6 +273,7 @@ export function BackendProvider({ children }: { children: ReactNode }) {
       ws.onclose = () => {
         setStatus('disconnected')
         if (pollRef.current) clearInterval(pollRef.current)
+        if (pairingPollRef.current) clearInterval(pairingPollRef.current)
       }
     } catch (err: any) {
       setStatus('disconnected')
@@ -268,6 +286,7 @@ export function BackendProvider({ children }: { children: ReactNode }) {
     return () => {
       wsRef.current?.close()
       if (pollRef.current) clearInterval(pollRef.current)
+      if (pairingPollRef.current) clearInterval(pairingPollRef.current)
     }
     // connect() intentionally re-created only on host/port change; auto-connect once.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -282,6 +301,10 @@ export function BackendProvider({ children }: { children: ReactNode }) {
     send('pairing', 'reject', { deviceId })
     setPairingRequests((prev) => prev.filter((r) => r.id !== deviceId))
   }, [send])
+
+  const dismissPairingToast = useCallback(() => {
+    setPairingToast({ show: false, deviceName: '', deviceId: '' })
+  }, [])
 
   const value: BackendState = {
     status,
@@ -298,6 +321,8 @@ export function BackendProvider({ children }: { children: ReactNode }) {
     theme,
     devices,
     pairingRequests,
+    pairingToast,
+    dismissPairingToast,
     setHost,
     setPort,
     connect,

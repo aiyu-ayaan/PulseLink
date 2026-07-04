@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import {
   LayoutDashboard, Smartphone, Volume2, Sun, ClipboardList,
@@ -42,7 +42,14 @@ const PANELS: Record<string, React.FC> = {
 
 function Shell() {
   const [active, setActive] = useState('dashboard')
-  const { host, port, setHost, setPort, connect, status, error, theme, toggleTheme } = useBackend()
+  const { host, port, setHost, setPort, connect, status, error, theme, toggleTheme, pairingRequests, pairingToast, dismissPairingToast, acceptPairing } = useBackend()
+
+  useEffect(() => {
+    if (pairingToast.show) {
+      const timer = setTimeout(() => dismissPairingToast(), 8000)
+      return () => clearTimeout(timer)
+    }
+  }, [pairingToast, dismissPairingToast])
   const Panel = PANELS[active] ?? Dashboard
   const title = NAV.find((n) => n.id === active)?.label ?? ''
 
@@ -100,6 +107,47 @@ function Shell() {
             </motion.div>
           </AnimatePresence>
         </div>
+
+        {pairingToast.show && (
+          <motion.div
+            initial={{ opacity: 0, y: 40, scale: 0.95 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 20, scale: 0.95 }}
+            className="pointer-events-none fixed inset-0 z-50 flex items-start justify-center pt-16 sm:pt-20"
+          >
+            <div className="pointer-events-auto w-full max-w-sm rounded-xl border border-accent/30 bg-card p-4 shadow-2xl backdrop-blur-2xl">
+              <div className="flex items-start gap-3">
+                <div className="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-accent-soft text-accent">
+                  <Smartphone size={20} />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-semibold text-text">New pairing request</p>
+                  <p className="truncate text-xs text-text-secondary mt-0.5">{pairingToast.deviceName}</p>
+                  <div className="mt-3 flex gap-2">
+                    <button
+                      onClick={() => { setActive('devices'); dismissPairingToast() }}
+                      className="rounded-md bg-accent px-3 py-1.5 text-xs font-semibold text-on-accent transition-colors hover:bg-accent-hover cursor-pointer"
+                    >
+                      View
+                    </button>
+                    <button
+                      onClick={() => { acceptPairing(pairingToast.deviceId); dismissPairingToast() }}
+                      className="rounded-md border border-stroke bg-control px-3 py-1.5 text-xs font-semibold text-text-secondary transition-colors hover:bg-control-hover cursor-pointer"
+                    >
+                      Accept
+                    </button>
+                    <button
+                      onClick={dismissPairingToast}
+                      className="ml-auto rounded-md bg-transparent px-2 py-1.5 text-xs text-text-tertiary hover:text-text cursor-pointer"
+                    >
+                      Dismiss
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </motion.div>
+        )}
       </main>
     </div>
   )
