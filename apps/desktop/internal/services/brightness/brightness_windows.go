@@ -4,8 +4,12 @@ package brightness
 
 import (
 	"fmt"
+	"os/exec"
+	"strconv"
 	"strings"
+	"sync"
 	"syscall"
+	"time"
 	"unsafe"
 )
 
@@ -48,14 +52,13 @@ var (
 
 	procCreateDCW          = gdi32.NewProc("CreateDCW")
 	procDeleteDC           = gdi32.NewProc("DeleteDC")
-	procGetDeviceGammaRamp = gdi32.NewProc("GetDeviceGammaRamp")
 	procSetDeviceGammaRamp = gdi32.NewProc("SetDeviceGammaRamp")
 )
 
 // monitorHW holds information about a single display.
 type monitorHW struct {
 	hMonitor   uintptr
-	deviceName string // e.g. `\\.\DISPLAY1`
+	deviceName string
 	isPrimary  bool
 }
 
@@ -71,7 +74,7 @@ func enumerateMonitors() []monitorHW {
 			result = append(result, monitorHW{
 				hMonitor:   hMonitor,
 				deviceName: name,
-				isPrimary:  mi.Flags&1 != 0, // MONITORINFOF_PRIMARY
+				isPrimary:  mi.Flags&1 != 0,
 			})
 		}
 		return 1
@@ -80,8 +83,83 @@ func enumerateMonitors() []monitorHW {
 	return result
 }
 
-// tryDDCGetBrightness attempts to read brightness via DDC/CI. Returns level (0-100) and ok.
-func tryDDCGetBrightness(hMonitor uintptr) (int, bool) {
+// ── WMI helpers (for laptop built-in panels) ──────────────────────────
+
+// wmiGetBrightness reads the built-in display brightness via WMI.
+// Returns level 0-100 and true, or 0/false if WMI is unavailable (desktop PC).
+func wmiGetBrightness() (int, bool) {
+	type result struct {
+		level int
+		ok    bool
+	}
+	ch := make(chan result, 1)
+	go func() {
+		cmd := `(Get-CimInstance -Namespace root/WMI -ClassName WmiMonitorBrightness -ErrorAction SilentlyContinue).CurrentBrightness`
+		out, err := exec.Command("powershell", "-NoProfile", "-NonInteractive", "-Command", cmd).Output()
+		if err != nil {
+			ch <- result{0, false}
+			return
+		}
+		val, err := strconv.Atoi(strings.TrimSpace(string(out)))
+		if err != nil {
+			ch <- result{0, false}
+			return
+		}
+		ch <- result{val, true}
+	}()
+	select {
+	case r := <-ch:
+		return r.level, r.ok
+	case <-time.After(3 * time.Second):
+		return 0, false
+	}
+}
+
+// wmiSetBrightness sets the built-in display brightness via WMI.
+// Returns true on success, false if WMI is unavailable.
+func wmiSetBrightness(level int) bool {
+	ch := make(chan bool, 1)
+	go func() {
+		cmd := fmt.Sprintf(
+			`$m = Get-CimInstance -Namespace root/WMI -ClassName WmiMonitorBrightnessMethods -ErrorAction SilentlyContinue; if ($m) { $m | Invoke-CimMethod -MethodName WmiSetBrightness -Arguments @{Timeout=1; Brightness=%d} | Out-Null; $true } else { $false }`,
+			level)
+		out, err := exec.Command("powershell", "-NoProfile", "-NonInteractive", "-Command", cmd).Output()
+		if err != nil {
+			ch <- false
+			return
+		}
+		ch <- strings.TrimSpace(string(out)) == "True"
+	}()
+	select {
+	case ok := <-ch:
+		return ok
+	case <-time.After(3 * time.Second):
+		return false
+	}
+}
+
+// ── DDC/CI helpers (with goroutine timeout) ───────────────────────────
+
+// ddcGetBrightness reads brightness via DDC/CI with a 2-second timeout.
+func ddcGetBrightness(hMonitor uintptr) (int, bool) {
+	type result struct {
+		level int
+		ok    bool
+	}
+	ch := make(chan result, 1)
+	go func() {
+		l, ok := ddcGetBrightnessSync(hMonitor)
+		ch <- result{l, ok}
+	}()
+	select {
+	case r := <-ch:
+		return r.level, r.ok
+	case <-time.After(2 * time.Second):
+		return 0, false
+	}
+}
+
+func ddcGetBrightnessSync(hMonitor uintptr) (int, bool) {
 	var numPhysical uint32
 	ret, _, _ := procGetNumberOfPhysicalMonitorsFromHMONITOR.Call(
 		hMonitor, uintptr(unsafe.Pointer(&numPhysical)),
@@ -114,8 +192,21 @@ func tryDDCGetBrightness(hMonitor uintptr) (int, bool) {
 	return 0, false
 }
 
-// tryDDCSetBrightness attempts to set brightness via DDC/CI. Returns true on success.
-func tryDDCSetBrightness(hMonitor uintptr, level int) bool {
+// ddcSetBrightness sets brightness via DDC/CI with a 2-second timeout.
+func ddcSetBrightness(hMonitor uintptr, level int) bool {
+	ch := make(chan bool, 1)
+	go func() {
+		ch <- ddcSetBrightnessSync(hMonitor, level)
+	}()
+	select {
+	case ok := <-ch:
+		return ok
+	case <-time.After(2 * time.Second):
+		return false
+	}
+}
+
+func ddcSetBrightnessSync(hMonitor uintptr, level int) bool {
 	var numPhysical uint32
 	ret, _, _ := procGetNumberOfPhysicalMonitorsFromHMONITOR.Call(
 		hMonitor, uintptr(unsafe.Pointer(&numPhysical)),
@@ -142,7 +233,8 @@ func tryDDCSetBrightness(hMonitor uintptr, level int) bool {
 	return ok
 }
 
-// setGammaRamp adjusts the software gamma ramp on a display to simulate brightness.
+// ── Gamma ramp helpers ────────────────────────────────────────────────
+
 func setGammaRamp(deviceName string, level int) bool {
 	namePtr, err := syscall.UTF16PtrFromString(deviceName)
 	if err != nil {
@@ -172,74 +264,90 @@ func setGammaRamp(deviceName string, level int) bool {
 	return ret != 0
 }
 
-// getGammaLevel reads the current gamma ramp and infers a brightness percentage.
-func getGammaLevel(deviceName string) (int, bool) {
-	namePtr, err := syscall.UTF16PtrFromString(deviceName)
-	if err != nil {
-		return 0, false
-	}
-	hdc, _, _ := procCreateDCW.Call(0, uintptr(unsafe.Pointer(namePtr)), 0, 0)
-	if hdc == 0 {
-		return 0, false
-	}
-	defer procDeleteDC.Call(hdc)
+// ── Probe (runs once at startup to detect capabilities) ───────────────
 
-	var ramp GammaRamp
-	ret, _, _ := procGetDeviceGammaRamp.Call(hdc, uintptr(unsafe.Pointer(&ramp)))
-	if ret == 0 {
-		return 0, false
-	}
-	mid := int(ramp.Red[128])
-	pct := mid * 100 / 32896
-	if pct > 100 {
-		pct = 100
-	}
-	if pct < 0 {
-		pct = 0
-	}
-	return pct, true
+// probeResult records what method works for each monitor.
+type probeResult struct {
+	method string // "wmi", "ddc", "gamma"
+	level  int
 }
 
-func (s *Service) GetBrightness() (any, error) {
+// probeMonitors runs once at startup. It tests each method per monitor
+// and caches which one works so subsequent get/set calls are instant.
+func (s *Service) probeMonitors() {
+	monitors := enumerateMonitors()
+	if len(monitors) == 0 {
+		return
+	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	monitors := enumerateMonitors()
-	if len(monitors) == 0 {
-		return BrightnessState{Monitors: s.lastMonitors}, nil
+	// First check if WMI is available (laptop built-in display).
+	hasWMI := false
+	wmiLevel := 0
+	if lvl, ok := wmiGetBrightness(); ok {
+		hasWMI = true
+		wmiLevel = lvl
+		s.log.Info("WMI brightness available (laptop built-in display)")
 	}
 
 	maxComp := s.cfg().MaxCompatibilityMode
 	var result []MonitorBrightness
+	s.methodCache = make(map[string]string)
 
 	for i, mon := range monitors {
+		id := fmt.Sprintf("monitor-%d", i)
 		mb := MonitorBrightness{
-			ID:   fmt.Sprintf("monitor-%d", i),
+			ID:   id,
 			Name: monitorLabel(mon, i),
 		}
 
+		// For the primary monitor on a laptop, WMI controls the real backlight
+		if hasWMI && mon.isPrimary {
+			mb.Level = wmiLevel
+			mb.Method = "wmi"
+			s.methodCache[id] = "wmi"
+			s.lastLevels[id] = wmiLevel
+			result = append(result, mb)
+			continue
+		}
+
+		// Try DDC/CI (with timeout)
 		if !maxComp {
-			if level, ok := tryDDCGetBrightness(mon.hMonitor); ok {
+			if level, ok := ddcGetBrightness(mon.hMonitor); ok {
 				mb.Level = level
 				mb.Method = "ddc"
+				s.methodCache[id] = "ddc"
+				s.lastLevels[id] = level
 				result = append(result, mb)
 				continue
 			}
 		}
 
-		// Fallback: read software gamma ramp
-		if level, ok := getGammaLevel(mon.deviceName); ok {
-			mb.Level = level
-			mb.Method = "gamma"
-		} else {
-			mb.Level = s.getLastLevel(mb.ID)
-			mb.Method = "gamma"
-		}
+		// Fallback: gamma ramp
+		mb.Level = 100
+		mb.Method = "gamma"
+		s.methodCache[id] = "gamma"
+		s.lastLevels[id] = 100
 		result = append(result, mb)
 	}
 
 	s.lastMonitors = result
-	return BrightnessState{Monitors: result}, nil
+	s.monitorHW = monitors
+	s.probed = true
+	s.log.Info("brightness probe complete", "monitors", len(result))
+}
+
+// ── Public API ────────────────────────────────────────────────────────
+
+func (s *Service) GetBrightness() (any, error) {
+	if !s.probed {
+		s.probeMonitors()
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return BrightnessState{Monitors: s.lastMonitors}, nil
 }
 
 func (s *Service) SetBrightness(monitorID string, level int) error {
@@ -251,33 +359,33 @@ func (s *Service) SetBrightness(monitorID string, level int) error {
 		level = 100
 	}
 
+	if !s.probed {
+		s.probeMonitors()
+	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	monitors := enumerateMonitors()
-	maxComp := s.cfg().MaxCompatibilityMode
+	applyAll := monitorID == "all"
 
+	// Resolve target index
 	targetIdx := -1
-	for i := range monitors {
-		id := fmt.Sprintf("monitor-%d", i)
-		if id == monitorID {
+	for i := range s.monitorHW {
+		if fmt.Sprintf("monitor-%d", i) == monitorID {
 			targetIdx = i
 			break
 		}
 	}
-
-	applyAll := monitorID == "all"
-
 	if targetIdx < 0 && !applyAll {
 		switch strings.ToLower(monitorID) {
 		case "internal", "":
-			if len(monitors) > 0 {
+			if len(s.monitorHW) > 0 {
 				targetIdx = 0
 			}
 		case "external":
-			if len(monitors) > 1 {
+			if len(s.monitorHW) > 1 {
 				targetIdx = 1
-			} else if len(monitors) > 0 {
+			} else if len(s.monitorHW) > 0 {
 				targetIdx = 0
 			}
 		default:
@@ -286,30 +394,55 @@ func (s *Service) SetBrightness(monitorID string, level int) error {
 	}
 
 	apply := func(idx int) {
-		mon := monitors[idx]
 		id := fmt.Sprintf("monitor-%d", idx)
+		method := s.methodCache[id]
+		mon := s.monitorHW[idx]
 
-		if !maxComp {
-			if tryDDCSetBrightness(mon.hMonitor, level) {
-				s.setLastLevel(id, level)
-				s.log.Info("brightness set via DDC/CI", "monitor", id, "level", level)
-				return
+		switch method {
+		case "wmi":
+			// Run WMI in background — don't block the response
+			go func() {
+				if wmiSetBrightness(level) {
+					s.log.Info("brightness set via WMI", "monitor", id, "level", level)
+				} else {
+					s.log.Warn("WMI set brightness failed, trying gamma", "monitor", id)
+					setGammaRamp(mon.deviceName, level)
+				}
+			}()
+		case "ddc":
+			// Run DDC/CI in background — don't block the response
+			go func() {
+				if ddcSetBrightness(mon.hMonitor, level) {
+					s.log.Info("brightness set via DDC/CI", "monitor", id, "level", level)
+				} else {
+					s.log.Warn("DDC/CI set failed, trying gamma", "monitor", id)
+					setGammaRamp(mon.deviceName, level)
+				}
+			}()
+		default:
+			// Gamma is instant — do it inline
+			if setGammaRamp(mon.deviceName, level) {
+				s.log.Info("brightness set via gamma ramp", "monitor", id, "level", level)
+			} else {
+				s.log.Warn("gamma ramp set failed", "monitor", id)
 			}
 		}
 
-		if setGammaRamp(mon.deviceName, level) {
-			s.setLastLevel(id, level)
-			s.log.Info("brightness set via gamma ramp", "monitor", id, "level", level)
-		} else {
-			s.log.Warn("failed to set brightness", "monitor", id)
+		// Update cache immediately so the response is instant
+		s.lastLevels[id] = level
+		for j := range s.lastMonitors {
+			if s.lastMonitors[j].ID == id {
+				s.lastMonitors[j].Level = level
+				break
+			}
 		}
 	}
 
 	if applyAll {
-		for i := range monitors {
+		for i := range s.monitorHW {
 			apply(i)
 		}
-	} else if targetIdx >= 0 && targetIdx < len(monitors) {
+	} else if targetIdx >= 0 && targetIdx < len(s.monitorHW) {
 		apply(targetIdx)
 	}
 
@@ -323,3 +456,6 @@ func monitorLabel(mon monitorHW, idx int) string {
 	}
 	return label
 }
+
+// probeResultCache is used by concurrent probing.
+var probeOnce sync.Once

@@ -4,6 +4,8 @@ package brightness
 
 import "fmt"
 
+type monitorHW struct{}
+
 func (s *Service) GetBrightness() (any, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

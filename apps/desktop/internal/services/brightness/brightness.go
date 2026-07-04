@@ -15,7 +15,7 @@ type MonitorBrightness struct {
 	ID     string `json:"id"`     // e.g. "monitor-0"
 	Name   string `json:"name"`   // e.g. "Display 1 (Primary)"
 	Level  int    `json:"level"`  // 0-100
-	Method string `json:"method"` // "ddc" or "gamma"
+	Method string `json:"method"` // "wmi", "ddc", or "gamma"
 }
 
 // BrightnessState is the response payload for brightness.get.
@@ -25,10 +25,9 @@ type BrightnessState struct {
 
 // SetBrightnessPayload is the request payload for brightness.set.
 type SetBrightnessPayload struct {
-	Monitor string `json:"monitor"` // monitor id, e.g. "monitor-0", "all", or legacy "internal"/"external"
+	Monitor string `json:"monitor"` // monitor id, "all", or legacy "internal"/"external"
 	Level   int    `json:"level"`   // 0-100
-	// Legacy fields — accepted for backward compat
-	Type string `json:"type"` // alias for Monitor
+	Type    string `json:"type"`    // legacy alias for Monitor
 }
 
 type Service struct {
@@ -37,15 +36,19 @@ type Service struct {
 	cfg          func() config.Config
 	mu           sync.Mutex
 	lastMonitors []MonitorBrightness
-	lastLevels   map[string]int // id -> last known level
+	lastLevels   map[string]int    // id -> last known level
+	methodCache  map[string]string // id -> "wmi"/"ddc"/"gamma"
+	monitorHW    []monitorHW       // cached hardware handles (Windows only, empty on other OS)
+	probed       bool
 }
 
 func New(log *slog.Logger, bus *eventbus.Bus, cfg func() config.Config) *Service {
 	return &Service{
-		log:        log,
-		bus:        bus,
-		cfg:        cfg,
-		lastLevels: make(map[string]int),
+		log:         log,
+		bus:         bus,
+		cfg:         cfg,
+		lastLevels:  make(map[string]int),
+		methodCache: make(map[string]string),
 	}
 }
 
@@ -55,17 +58,14 @@ func (s *Service) Name() string {
 
 func (s *Service) Start(ctx context.Context) error {
 	s.log.Info("brightness service starting")
-	// Populate initial levels — errors are non-fatal
-	if state, err := s.GetBrightness(); err == nil {
-		if bs, ok := state.(BrightnessState); ok {
-			s.mu.Lock()
-			s.lastMonitors = bs.Monitors
-			for _, m := range bs.Monitors {
-				s.lastLevels[m.ID] = m.Level
-			}
-			s.mu.Unlock()
-		}
-	}
+	// Probe monitors once (populates cache). Non-fatal.
+	s.GetBrightness()
+
+	s.bus.Subscribe("settings.changed", func(evt eventbus.Event) {
+		s.mu.Lock()
+		s.probed = false
+		s.mu.Unlock()
+	})
 	return nil
 }
 
@@ -78,7 +78,7 @@ func (s *Service) getLastLevel(id string) int {
 	if v, ok := s.lastLevels[id]; ok {
 		return v
 	}
-	return 100 // default to full brightness
+	return 100
 }
 
 func (s *Service) setLastLevel(id string, level int) {
@@ -94,7 +94,6 @@ func (s *Service) Handle(ctx context.Context, req protocol.Envelope) (any, error
 		if err := req.Bind(&payload); err != nil {
 			return nil, &protocol.Error{Code: protocol.CodeBadRequest, Message: "malformed set brightness payload"}
 		}
-		// Support legacy "type" field as alias for "monitor"
 		monitorID := payload.Monitor
 		if monitorID == "" {
 			monitorID = payload.Type
@@ -102,17 +101,14 @@ func (s *Service) Handle(ctx context.Context, req protocol.Envelope) (any, error
 		if monitorID == "" {
 			monitorID = "all"
 		}
-		err := s.SetBrightness(monitorID, payload.Level)
-		if err != nil {
+		if err := s.SetBrightness(monitorID, payload.Level); err != nil {
 			s.log.Error("set brightness failed", "err", err)
-			// Return the current state anyway — don't crash the connection
-			state, _ := s.GetBrightness()
-			return state, nil
 		}
-		state, err := s.GetBrightness()
-		if err == nil {
-			s.bus.Publish(eventbus.Event{Topic: "brightness.changed", Payload: state})
-		}
+		// Return the cached state immediately — no re-probing
+		s.mu.Lock()
+		state := BrightnessState{Monitors: s.lastMonitors}
+		s.mu.Unlock()
+		s.bus.Publish(eventbus.Event{Topic: "brightness.changed", Payload: state})
 		return state, nil
 	default:
 		return nil, &protocol.Error{Code: protocol.CodeUnsupported, Message: "unknown brightness action"}
