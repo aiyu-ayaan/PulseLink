@@ -53,6 +53,7 @@ class MainActivity : ComponentActivity() {
                     val state by vm.state.collectAsState()
                     val sysInfo by vm.sysInfo.collectAsState()
                     val volume by vm.volume.collectAsState()
+                    val brightness by vm.brightness.collectAsState()
                     val mediaState by vm.mediaState.collectAsState()
                     val error by vm.error.collectAsState()
 
@@ -90,9 +91,11 @@ class MainActivity : ComponentActivity() {
                                     if (state == ConnState.Ready) {
                                         ControlScreen(
                                             sysInfo = sysInfo, volume = volume, mediaState = mediaState,
+                                            brightness = brightness,
                                             onMedia = vm.client::media,
                                             onVolume = vm.client::setVolume,
                                             onMute = vm.client::toggleMute,
+                                            onBrightness = vm.client::setBrightness,
                                             onPower = vm.client::power,
                                             onDisconnect = vm::disconnect,
                                         )

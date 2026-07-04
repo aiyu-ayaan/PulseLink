@@ -41,17 +41,22 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.pulselink.net.SysInfo
 import com.pulselink.net.Volume
+import com.pulselink.net.Brightness
 import com.pulselink.net.MediaState
 import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.Tv
+import androidx.compose.material.icons.filled.BrightnessMedium
 
 @Composable
 fun ControlScreen(
     sysInfo: SysInfo?,
     volume: Volume,
     mediaState: MediaState,
+    brightness: Brightness,
     onMedia: (String) -> Unit,
     onVolume: (Int) -> Unit,
     onMute: () -> Unit,
+    onBrightness: (String, Int) -> Unit,
     onPower: (String) -> Unit,
     onDisconnect: () -> Unit,
 ) {
@@ -68,6 +73,7 @@ fun ControlScreen(
         SysInfoCard(sysInfo)
         MediaCard(mediaState, onMedia)
         VolumeCard(volume, onVolume, onMute)
+        BrightnessCard(brightness, onBrightness)
         PowerCard(onPower)
     }
 }
@@ -174,6 +180,42 @@ private fun VolumeCard(volume: Volume, onVolume: (Int) -> Unit, onMute: () -> Un
             valueRange = 0f..100f, modifier = Modifier.weight(1f),
         )
         Text("${pos.toInt()}%", modifier = Modifier.width(44.dp))
+    }
+}
+
+@Composable
+private fun BrightnessCard(brightness: Brightness, onBrightness: (String, Int) -> Unit) = SectionCard("Brightness") {
+    var internalPos by remember(brightness.internal) { mutableFloatStateOf(brightness.internal.toFloat()) }
+    var externalPos by remember(brightness.external) { mutableFloatStateOf(brightness.external.toFloat()) }
+
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Icon(Icons.Filled.Tv, "Internal")
+            Text("Internal Display", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+            Text("${internalPos.toInt()}%", modifier = Modifier.width(44.dp), textAlign = androidx.compose.ui.text.style.TextAlign.End)
+        }
+        Slider(
+            value = internalPos,
+            onValueChange = { internalPos = it },
+            onValueChangeFinished = { onBrightness("internal", internalPos.toInt()) },
+            valueRange = 0f..100f,
+            modifier = Modifier.fillMaxWidth()
+        )
+
+        Spacer(Modifier.height(8.dp))
+
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Icon(Icons.Filled.BrightnessMedium, "External")
+            Text("External Display", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+            Text("${externalPos.toInt()}%", modifier = Modifier.width(44.dp), textAlign = androidx.compose.ui.text.style.TextAlign.End)
+        }
+        Slider(
+            value = externalPos,
+            onValueChange = { externalPos = it },
+            onValueChangeFinished = { onBrightness("external", externalPos.toInt()) },
+            valueRange = 0f..100f,
+            modifier = Modifier.fillMaxWidth()
+        )
     }
 }
 

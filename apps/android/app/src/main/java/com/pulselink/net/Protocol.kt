@@ -54,6 +54,9 @@ data class SysInfo(
 data class Volume(val level: Int = 0, val muted: Boolean = false)
 
 @Serializable
+data class Brightness(val internal: Int = 50, val external: Int = 80)
+
+@Serializable
 data class MediaState(
     val title: String = "",
     val artist: String = "",

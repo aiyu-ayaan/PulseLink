@@ -60,6 +60,9 @@ class PulseClient(private val scope: CoroutineScope) {
     private val _volume = MutableStateFlow(Volume())
     val volume: StateFlow<Volume> = _volume.asStateFlow()
 
+    private val _brightness = MutableStateFlow(Brightness())
+    val brightness: StateFlow<Brightness> = _brightness.asStateFlow()
+
     private val _mediaState = MutableStateFlow(MediaState())
     val mediaState: StateFlow<MediaState> = _mediaState.asStateFlow()
 
@@ -193,6 +196,10 @@ class PulseClient(private val scope: CoroutineScope) {
     fun volumeUp() = send("volume", "up")
     fun volumeDown() = send("volume", "down")
     fun toggleMute() = send("volume", "mute")
+    fun setBrightness(type: String, level: Int) = send("brightness", "set", buildJsonObject {
+        put("type", type)
+        put("level", level)
+    })
 
     private fun request(capability: String, action: String, payload: JsonObject?): String {
         val env = Envelope(
