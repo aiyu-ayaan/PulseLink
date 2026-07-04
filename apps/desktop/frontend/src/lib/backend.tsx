@@ -54,6 +54,15 @@ export interface BackendConfig {
   deviceName: string
 }
 
+export interface PairingInfo {
+  host: string
+  port: number
+  scheme: 'ws' | 'wss'
+  token: string
+  uri: string
+  expiresAt: number
+}
+
 export interface ClipEvent {
   ts: string
   text: string
@@ -75,6 +84,7 @@ interface BackendState {
   theme: 'dark' | 'light'
   devices: DeviceInfo[]
   deviceHistory: DeviceHistoryItem[]
+  pairingInfo: PairingInfo | null
   pairingRequests: DeviceInfo[]
   setHost: (v: string) => void
   setPort: (v: string) => void
@@ -119,6 +129,7 @@ export function BackendProvider({ children }: { children: ReactNode }) {
   const [theme, setTheme] = useState<'dark' | 'light'>('dark')
   const [devices, setDevices] = useState<DeviceInfo[]>([])
   const [deviceHistory, setDeviceHistory] = useState<DeviceHistoryItem[]>([])
+  const [pairingInfo, setPairingInfo] = useState<PairingInfo | null>(null)
   const [pairingRequests, setPairingRequests] = useState<DeviceInfo[]>([])
 
   const wsRef = useRef<WebSocket | null>(null)
@@ -179,6 +190,7 @@ export function BackendProvider({ children }: { children: ReactNode }) {
           send('settings', 'get')
           send('devices', 'get')
           send('devices', 'history')
+          send('pairing', 'info')
           send('pairing', 'pending')
           if (pollRef.current) clearInterval(pollRef.current)
           pollRef.current = setInterval(() => {
@@ -220,13 +232,19 @@ export function BackendProvider({ children }: { children: ReactNode }) {
           }
           break
         case 'pairing':
-          if (env.action === 'request') {
+          if (env.action === 'info') {
+            if (env.payload) setPairingInfo(env.payload)
+          } else if (env.action === 'request') {
             if (env.payload) {
               setPairingRequests((prev) => {
                 if (prev.some((r) => r.id === env.payload.id)) return prev
                 return [...prev, env.payload]
               })
               send('devices', 'history')
+              // The token behind the currently displayed QR was just consumed
+              // (tokens are single-use) — fetch a fresh one so the QR keeps
+              // working for the next device.
+              send('pairing', 'info')
             }
           } else if (env.action === 'pending') {
             if (env.payload?.devices) {
@@ -357,7 +375,17 @@ export function BackendProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     connect()
     return () => {
-      wsRef.current?.close()
+      // Null the handlers before closing — otherwise this socket's onclose
+      // fires (immediately or async, engine-dependent) after React's
+      // StrictMode dev double-invoke has already opened a second, good
+      // connection, incorrectly flipping status back to disconnected and
+      // scheduling a needless reconnect that tears the good one down.
+      if (wsRef.current) {
+        wsRef.current.onclose = null
+        wsRef.current.onerror = null
+        wsRef.current.onmessage = null
+        wsRef.current.close()
+      }
       if (pollRef.current) clearInterval(pollRef.current)
       if (pairingPollRef.current) clearInterval(pairingPollRef.current)
       if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current)
@@ -391,6 +419,7 @@ export function BackendProvider({ children }: { children: ReactNode }) {
     theme,
     devices,
     deviceHistory,
+    pairingInfo,
     pairingRequests,
     setHost,
     setPort,

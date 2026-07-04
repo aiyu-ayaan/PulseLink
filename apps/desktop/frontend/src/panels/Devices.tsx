@@ -1,33 +1,42 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useState } from 'react'
 import QRCode from 'qrcode'
 import { Smartphone, Copy, Check, Shield, ShieldCheck, ShieldX } from 'lucide-react'
 import { useBackend } from '../lib/backend'
 import { Card, CardHeader, Field, inputCls } from '../components/ui'
 
-// Dev pairing token. Auth is AllowAll server-side today, so this is carried
-// end-to-end but not yet enforced — it exists so the QR payload is already the
-// real shape the Android client parses.
-const DEV_TOKEN = 'desktop-local'
-
 export function Devices() {
-  const { config, host, deviceHistory, pairingRequests, acceptPairing, rejectPairing } = useBackend()
+  const { config, host, pairingInfo, deviceHistory, pairingRequests, acceptPairing, rejectPairing, send } = useBackend()
   const [pairHost, setPairHost] = useState(host)
   const [pairPort, setPairPort] = useState(String(config.server.port || 9843))
   const [qr, setQr] = useState('')
   const [copied, setCopied] = useState(false)
 
-  // pulselink://pair?... — the exact URI the Android scanner decodes.
-  const pairUri = useMemo(() => {
-    const p = new URLSearchParams({
-      host: pairHost,
-      port: pairPort,
-      token: DEV_TOKEN,
-      name: config.deviceName || 'PulseLink-PC',
-    })
-    return `pulselink://pair?${p.toString()}`
-  }, [pairHost, pairPort, config.deviceName])
+  const pairUri = pairingInfo?.uri || ''
+
+  // Fetch a fresh token whenever this panel is opened — the one issued at
+  // connect time may already be expired (10 min TTL) or already used.
+  useEffect(() => {
+    send('pairing', 'info')
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   useEffect(() => {
+    if (!pairingInfo) return
+    setPairHost(pairingInfo.host)
+    setPairPort(String(pairingInfo.port))
+    // Auto-refresh once this token's 10-minute TTL runs out, so a QR left
+    // on screen doesn't silently go dead.
+    const msLeft = pairingInfo.expiresAt * 1000 - Date.now()
+    if (msLeft <= 0) return
+    const t = setTimeout(() => send('pairing', 'info'), msLeft)
+    return () => clearTimeout(t)
+  }, [pairingInfo, send])
+
+  useEffect(() => {
+    if (!pairUri) {
+      setQr('')
+      return
+    }
     QRCode.toDataURL(pairUri, { margin: 1, width: 240, errorCorrectionLevel: 'M' })
       .then(setQr)
       .catch(() => setQr(''))
@@ -60,7 +69,7 @@ export function Devices() {
             {qr ? (
               <img src={qr} alt="Pairing QR code" width={220} height={220} />
             ) : (
-              <div className="grid h-[220px] w-[220px] place-items-center text-xs text-slate-500">Generating…</div>
+              <div className="grid h-[220px] w-[220px] place-items-center text-xs text-slate-500">Connect backend first</div>
             )}
           </div>
           <button
@@ -78,15 +87,15 @@ export function Devices() {
             <div className="grid grid-cols-3 gap-3">
               <div className="col-span-2">
                 <Field label="Host / IP">
-                  <input className={inputCls} value={pairHost} onChange={(e) => setPairHost(e.target.value)} />
+                  <input className={inputCls} value={pairHost} readOnly />
                 </Field>
               </div>
               <Field label="Port">
-                <input className={inputCls} value={pairPort} onChange={(e) => setPairPort(e.target.value)} />
+                <input className={inputCls} value={pairPort} readOnly />
               </Field>
             </div>
             <Field label="Pairing token">
-              <input className={`${inputCls} font-mono`} value={DEV_TOKEN} readOnly />
+              <input className={`${inputCls} font-mono`} value={pairingInfo?.token || ''} readOnly />
             </Field>
             <div className="rounded-md border border-stroke bg-control/60 p-3">
               <div className="mb-1 flex items-center gap-2 text-xs font-medium text-text-secondary">
