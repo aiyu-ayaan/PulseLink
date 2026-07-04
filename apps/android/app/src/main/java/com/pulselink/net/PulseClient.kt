@@ -32,6 +32,10 @@ class PulseClient(private val scope: CoroutineScope) {
     private val http = HttpClient(CIO) {
         install(WebSockets)
         engine {
+            endpoint {
+                connectTimeout = 5000L
+                connectAttempts = 1
+            }
             https {
                 trustManager = object : javax.net.ssl.X509TrustManager {
                     override fun checkClientTrusted(chain: Array<out java.security.cert.X509Certificate>?, authType: String?) {}
@@ -106,10 +110,9 @@ class PulseClient(private val scope: CoroutineScope) {
                     if (frame is Frame.Text) handle(frame.readText())
                 }
                 _state.value = ConnState.Disconnected
-            } catch (e: Exception) {
+            } catch (e: Throwable) {
                 if (e is kotlinx.coroutines.CancellationException) throw e
-                if (scope.isActive) _error.value =
-                    "Cannot reach $host:$port — is PulseLink running on the PC?"
+                if (scope.isActive) _error.value = e.message ?: e.toString()
                 _state.value = ConnState.Disconnected
             }
         }
