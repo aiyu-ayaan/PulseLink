@@ -234,7 +234,12 @@ export function BackendProvider({ children }: { children: ReactNode }) {
             }
           } else if (env.action === 'list') {
             if (env.payload) setPairingRequests(env.payload)
-          } else if (env.action === 'approved' || env.action === 'rejected') {
+          } else if (
+            env.action === 'approved' ||
+            env.action === 'rejected' ||
+            env.action === 'accept' ||
+            env.action === 'reject'
+          ) {
             const devId = env.payload?.deviceId || env.payload
             if (devId) {
               setPairingRequests((prev) => prev.filter((r) => r.id !== devId))
