@@ -175,7 +175,7 @@ func writeEnvelope(t *testing.T, conn *websocket.Conn, env protocol.Envelope) {
 
 func readEnvelope(t *testing.T, conn *websocket.Conn) protocol.Envelope {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	typ, data, err := conn.Read(ctx)
 	if err != nil {

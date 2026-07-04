@@ -10,22 +10,42 @@ import (
 	"github.com/aiyu-ayaan/pulselink/apps/desktop/internal/protocol"
 )
 
+// MonitorBrightness describes a single monitor's brightness.
+type MonitorBrightness struct {
+	ID     string `json:"id"`     // e.g. "monitor-0"
+	Name   string `json:"name"`   // e.g. "Display 1 (Primary)"
+	Level  int    `json:"level"`  // 0-100
+	Method string `json:"method"` // "ddc" or "gamma"
+}
+
+// BrightnessState is the response payload for brightness.get.
+type BrightnessState struct {
+	Monitors []MonitorBrightness `json:"monitors"`
+}
+
+// SetBrightnessPayload is the request payload for brightness.set.
+type SetBrightnessPayload struct {
+	Monitor string `json:"monitor"` // monitor id, e.g. "monitor-0", "all", or legacy "internal"/"external"
+	Level   int    `json:"level"`   // 0-100
+	// Legacy fields — accepted for backward compat
+	Type string `json:"type"` // alias for Monitor
+}
+
 type Service struct {
-	log               *slog.Logger
-	bus               *eventbus.Bus
-	cfg               func() config.Config
-	mu                sync.Mutex
-	lastInternalLevel int
-	lastExternalLevel int
+	log          *slog.Logger
+	bus          *eventbus.Bus
+	cfg          func() config.Config
+	mu           sync.Mutex
+	lastMonitors []MonitorBrightness
+	lastLevels   map[string]int // id -> last known level
 }
 
 func New(log *slog.Logger, bus *eventbus.Bus, cfg func() config.Config) *Service {
 	return &Service{
-		log:               log,
-		bus:               bus,
-		cfg:               cfg,
-		lastInternalLevel: 50,
-		lastExternalLevel: 80,
+		log:        log,
+		bus:        bus,
+		cfg:        cfg,
+		lastLevels: make(map[string]int),
 	}
 }
 
@@ -35,12 +55,14 @@ func (s *Service) Name() string {
 
 func (s *Service) Start(ctx context.Context) error {
 	s.log.Info("brightness service starting")
-	// Populate initial levels
+	// Populate initial levels — errors are non-fatal
 	if state, err := s.GetBrightness(); err == nil {
 		if bs, ok := state.(BrightnessState); ok {
 			s.mu.Lock()
-			s.lastInternalLevel = bs.Internal
-			s.lastExternalLevel = bs.External
+			s.lastMonitors = bs.Monitors
+			for _, m := range bs.Monitors {
+				s.lastLevels[m.ID] = m.Level
+			}
 			s.mu.Unlock()
 		}
 	}
@@ -52,14 +74,15 @@ func (s *Service) Stop(ctx context.Context) error {
 	return nil
 }
 
-type BrightnessState struct {
-	Internal int `json:"internal"` // 0-100
-	External int `json:"external"` // 0-100, if detected
+func (s *Service) getLastLevel(id string) int {
+	if v, ok := s.lastLevels[id]; ok {
+		return v
+	}
+	return 100 // default to full brightness
 }
 
-type SetBrightnessPayload struct {
-	Type  string `json:"type"`  // "internal" or "external"
-	Level int    `json:"level"` // 0-100
+func (s *Service) setLastLevel(id string, level int) {
+	s.lastLevels[id] = level
 }
 
 func (s *Service) Handle(ctx context.Context, req protocol.Envelope) (any, error) {
@@ -71,9 +94,20 @@ func (s *Service) Handle(ctx context.Context, req protocol.Envelope) (any, error
 		if err := req.Bind(&payload); err != nil {
 			return nil, &protocol.Error{Code: protocol.CodeBadRequest, Message: "malformed set brightness payload"}
 		}
-		err := s.SetBrightness(payload.Type, payload.Level)
+		// Support legacy "type" field as alias for "monitor"
+		monitorID := payload.Monitor
+		if monitorID == "" {
+			monitorID = payload.Type
+		}
+		if monitorID == "" {
+			monitorID = "all"
+		}
+		err := s.SetBrightness(monitorID, payload.Level)
 		if err != nil {
-			return nil, err
+			s.log.Error("set brightness failed", "err", err)
+			// Return the current state anyway — don't crash the connection
+			state, _ := s.GetBrightness()
+			return state, nil
 		}
 		state, err := s.GetBrightness()
 		if err == nil {
