@@ -4,13 +4,24 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.viewModels
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.collectAsState
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.dp
 import com.pulselink.net.ConnState
 import com.pulselink.ui.ConnectScreen
 import com.pulselink.ui.ControlScreen
@@ -40,6 +51,30 @@ class MainActivity : ComponentActivity() {
                                     onPower = vm.client::power,
                                     onDisconnect = vm::disconnect,
                                 )
+                            } else if (state == ConnState.PairingPending) {
+                                Column(
+                                    modifier = Modifier.fillMaxSize().padding(24.dp),
+                                    verticalArrangement = Arrangement.Center,
+                                    horizontalAlignment = Alignment.CenterHorizontally
+                                ) {
+                                    CircularProgressIndicator(color = androidx.compose.material3.MaterialTheme.colorScheme.primary)
+                                    Spacer(Modifier.height(24.dp))
+                                    Text(
+                                        text = "Pairing Pending",
+                                        style = androidx.compose.material3.MaterialTheme.typography.headlineSmall,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                    Spacer(Modifier.height(8.dp))
+                                    Text(
+                                        text = "Please click Accept on your PC to authorize this device.",
+                                        textAlign = TextAlign.Center,
+                                        style = androidx.compose.material3.MaterialTheme.typography.bodyMedium
+                                    )
+                                    Spacer(Modifier.height(24.dp))
+                                    Button(onClick = vm::disconnect) {
+                                        Text("Cancel")
+                                    }
+                                }
                             } else {
                                 ConnectScreen(
                                     initialHost = vm.lastHost, initialPort = vm.lastPort,

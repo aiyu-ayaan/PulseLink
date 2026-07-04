@@ -56,5 +56,5 @@ data class Volume(val level: Int = 0, val muted: Boolean = false)
 // Capabilities this client advertises in the hello. AllowAll server-side today.
 val CLIENT_CAPS = listOf(
     "media", "volume", "brightness", "clipboard", "power", "sysinfo",
-    "apps", "notification", "settings",
+    "apps", "notification", "settings", "pairing",
 )

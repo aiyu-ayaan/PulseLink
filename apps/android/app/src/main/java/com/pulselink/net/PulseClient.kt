@@ -4,6 +4,7 @@ import io.ktor.client.HttpClient
 import io.ktor.client.engine.cio.CIO
 import io.ktor.client.plugins.websocket.WebSockets
 import io.ktor.client.plugins.websocket.webSocketSession
+import io.ktor.client.request.url
 import io.ktor.websocket.Frame
 import io.ktor.websocket.close
 import io.ktor.websocket.readText
@@ -22,13 +23,24 @@ import kotlinx.serialization.json.encodeToJsonElement
 import kotlinx.serialization.json.put
 import java.util.UUID
 
-enum class ConnState { Disconnected, Connecting, Connected, Ready }
+enum class ConnState { Disconnected, Connecting, Connected, Ready, PairingPending }
 
 // Ktor WebSocket client speaking the PulseLink JSON protocol. One session at a
-// time; call connect() to (re)open. MVP uses plain ws:// (matches desktop Stage B).
+// time; call connect() to (re)open. Auto-trusts self-signed TLS certs.
 class PulseClient(private val scope: CoroutineScope) {
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
-    private val http = HttpClient(CIO) { install(WebSockets) }
+    private val http = HttpClient(CIO) {
+        install(WebSockets)
+        engine {
+            https {
+                trustManager = object : javax.net.ssl.X509TrustManager {
+                    override fun checkClientTrusted(chain: Array<out java.security.cert.X509Certificate>?, authType: String?) {}
+                    override fun checkServerTrusted(chain: Array<out java.security.cert.X509Certificate>?, authType: String?) {}
+                    override fun getAcceptedIssuers(): Array<java.security.cert.X509Certificate> = emptyArray()
+                }
+            }
+        }
+    }
 
     private val _state = MutableStateFlow(ConnState.Disconnected)
     val state: StateFlow<ConnState> = _state.asStateFlow()
@@ -46,13 +58,38 @@ class PulseClient(private val scope: CoroutineScope) {
     private var pump: Job? = null
     private var poll: Job? = null
 
+    private var lastHost: String = ""
+    private var lastPort: Int = 9843
+    private var lastDeviceName: String = ""
+    private var lastToken: String = ""
+
     fun connect(host: String, port: Int, deviceName: String, token: String) {
+        this.lastHost = host
+        this.lastPort = port
+        this.lastDeviceName = deviceName
+        this.lastToken = token
+
         disconnect()
         _state.value = ConnState.Connecting
         _error.value = null
         pump = scope.launch {
             try {
-                val s = http.webSocketSession(host = host, port = port, path = "/ws")
+                // Try wss first
+                var sessionResult = runCatching {
+                    http.webSocketSession {
+                        url("wss://$host:$port/ws")
+                    }
+                }
+                if (sessionResult.isFailure) {
+                    // Fallback to ws
+                    sessionResult = runCatching {
+                        http.webSocketSession {
+                            url("ws://$host:$port/ws")
+                        }
+                    }
+                }
+
+                val s = sessionResult.getOrThrow()
                 session = s
                 _state.value = ConnState.Connected
                 val hello = ClientHello(
@@ -106,10 +143,18 @@ class PulseClient(private val scope: CoroutineScope) {
         if (env.capability == "handshake" && env.action == "welcome") {
             val w = env.payload?.let { runCatching { json.decodeFromJsonElement(ServerWelcome.serializer(), it) }.getOrNull() }
             if (w?.accepted == true) {
-                _state.value = ConnState.Ready
-                send("sysinfo", "get"); send("volume", "get")
-                poll = scope.launch {
-                    while (isActive) { kotlinx.coroutines.delay(4000); send("sysinfo", "get") }
+                val hasFullAccess = w.capabilities.contains("sysinfo") || w.capabilities.contains("volume")
+                if (hasFullAccess) {
+                    _state.value = ConnState.Ready
+                    send("sysinfo", "get"); send("volume", "get")
+                    poll = scope.launch {
+                        while (isActive) { kotlinx.coroutines.delay(4000); send("sysinfo", "get") }
+                    }
+                } else if (w.capabilities.contains("pairing")) {
+                    _state.value = ConnState.PairingPending
+                } else {
+                    _error.value = "Unauthorized: no capabilities negotiated"
+                    _state.value = ConnState.Disconnected
                 }
             } else {
                 _error.value = "Handshake rejected: ${w?.reason ?: "unauthorized"}"
@@ -122,6 +167,16 @@ class PulseClient(private val scope: CoroutineScope) {
         when (env.capability) {
             "sysinfo" -> runCatching { json.decodeFromJsonElement(SysInfo.serializer(), p) }.getOrNull()?.let { _sysInfo.value = it }
             "volume" -> runCatching { json.decodeFromJsonElement(Volume.serializer(), p) }.getOrNull()?.let { _volume.value = it }
+            "pairing" -> {
+                if (env.action == "approved") {
+                    scope.launch {
+                        connect(lastHost, lastPort, lastDeviceName, lastToken)
+                    }
+                } else if (env.action == "rejected") {
+                    _error.value = "Pairing request was rejected by the PC"
+                    disconnect()
+                }
+            }
         }
     }
 }
