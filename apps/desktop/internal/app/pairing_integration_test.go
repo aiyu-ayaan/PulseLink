@@ -108,6 +108,26 @@ func TestPairingFlowOverWebSocket(t *testing.T) {
 	defer trusted.Close(websocket.StatusNormalClosure, "")
 
 	sendRequest(t, trusted, "sysinfo", "get", nil)
+
+	// Reject path: a second device asks to pair, the UI rejects it, and the
+	// device must receive the rejected event (not just a dropped socket).
+	rejected := dialAndHandshake(t, wsURL, protocol.ClientHello{
+		ProtocolVersion: protocol.Version,
+		DeviceID:        "android-intruder",
+		DeviceName:      "Intruder",
+		AppVersion:      "test",
+		Token:           "",
+		Capabilities:    []string{"pairing", "sysinfo", "volume"},
+	})
+	defer rejected.Close(websocket.StatusNormalClosure, "")
+
+	readUntil(t, ui, func(env protocol.Envelope) bool {
+		return env.Type == protocol.TypeEvent && env.Capability == "pairing" && env.Action == "request"
+	})
+	sendRequest(t, ui, "pairing", "reject", map[string]string{"deviceId": "android-intruder"})
+	readUntil(t, rejected, func(env protocol.Envelope) bool {
+		return env.Type == protocol.TypeEvent && env.Capability == "pairing" && env.Action == "rejected"
+	})
 }
 
 func freeTCPPort(t *testing.T) int {

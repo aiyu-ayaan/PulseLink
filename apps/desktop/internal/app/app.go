@@ -194,7 +194,8 @@ func New(cfgPath string) (*App, error) {
 		hub.SendToDevice(deviceID, env)
 	})
 
-	// Handle pairing rejections by disconnecting the device.
+	// Tell the device it was rejected, then disconnect it. Without the event
+	// the phone only sees a dropped socket and reports a misleading timeout.
 	bus.Subscribe("pairing.rejected", func(ev eventbus.Event) {
 		deviceID, ok := ev.Payload.(string)
 		if !ok {
@@ -202,7 +203,15 @@ func New(cfgPath string) (*App, error) {
 			return
 		}
 		log.Info("pairing.rejected event", "device", deviceID)
-		hub.DisconnectDevice(deviceID)
+		if env, err := protocol.NewEvent("pairing", "rejected", nil); err == nil {
+			hub.SendToDevice(deviceID, env)
+		}
+		// Grace period so the queued event flushes before the socket drops;
+		// the client disconnects itself on receipt, this is the backstop.
+		go func() {
+			time.Sleep(500 * time.Millisecond)
+			hub.DisconnectDevice(deviceID)
+		}()
 	})
 
 	// Log presence changes for debugging.
