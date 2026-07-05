@@ -76,6 +76,7 @@ class PulseClient(private val scope: CoroutineScope) {
 
     private var lastHost: String = ""
     private var lastPort: Int = 9843
+    private var lastDeviceId: String = ""
     private var lastDeviceName: String = ""
     private var lastToken: String = ""
     private var lastScheme: String = "ws"
@@ -85,10 +86,11 @@ class PulseClient(private val scope: CoroutineScope) {
         const val PAIRING_TIMEOUT_MS = 60_000L
     }
 
-    fun connect(host: String, port: Int, deviceName: String, token: String, preferredScheme: String = "ws") {
+    fun connect(host: String, port: Int, deviceId: String, deviceName: String, token: String, preferredScheme: String = "ws") {
         Log.d("PulseClient", "Connecting to $host:$port (device: $deviceName, scheme: $preferredScheme)...")
         this.lastHost = host
         this.lastPort = port
+        this.lastDeviceId = deviceId
         this.lastDeviceName = deviceName
         this.lastToken = token
         this.lastScheme = preferredScheme
@@ -136,7 +138,7 @@ class PulseClient(private val scope: CoroutineScope) {
                 _state.value = ConnState.Connected
                 Log.d("PulseClient", "Connected. Sending handshake hello.")
                 val hello = ClientHello(
-                    deviceId = "android-$deviceName", deviceName = deviceName,
+                    deviceId = deviceId, deviceName = deviceName,
                     token = token, capabilities = CLIENT_CAPS,
                 )
                 s.send(request("handshake", "hello", json.encodeToJsonElement(hello) as JsonObject))
@@ -294,7 +296,7 @@ class PulseClient(private val scope: CoroutineScope) {
                 if (env.action == "approved") {
                     pairingTimeout?.cancel(); pairingTimeout = null
                     scope.launch(Dispatchers.IO) {
-                        connect(lastHost, lastPort, lastDeviceName, lastToken, lastScheme)
+                        connect(lastHost, lastPort, lastDeviceId, lastDeviceName, lastToken, lastScheme)
                     }
                 } else if (env.action == "rejected") {
                     pairingTimeout?.cancel(); pairingTimeout = null

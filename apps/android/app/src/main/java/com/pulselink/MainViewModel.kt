@@ -15,6 +15,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val prefs = app.getSharedPreferences("pulselink", Context.MODE_PRIVATE)
     val client = PulseClient(viewModelScope)
 
+    // Stable install-scoped identity. Build.MODEL collides across two phones of
+    // the same model, so pairing would silently evict the other device's trust.
+    private val deviceId: String = prefs.getString(KEY_DEVICE_ID, null) ?: run {
+        val id = "android-" + java.util.UUID.randomUUID().toString().take(12)
+        prefs.edit().putString(KEY_DEVICE_ID, id).apply()
+        id
+    }
+
     val state get() = client.state
     val sysInfo get() = client.sysInfo
     val volume get() = client.volume
@@ -49,7 +57,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             .putString(KEY_TOKEN, token)
             .putString(KEY_SCHEME, scheme)
             .apply()
-        client.connect(host, port, deviceName, token, scheme)
+        client.connect(host, port, deviceId, deviceName, token, scheme)
     }
 
     fun connectPaired(p: PairInfo) = connect(p.host, p.port, p.name, p.token, p.scheme)
@@ -84,5 +92,6 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         private const val KEY_NAME = "name"
         private const val KEY_SCHEME = "scheme"
         private const val KEY_PAIRED = "paired"
+        private const val KEY_DEVICE_ID = "deviceId"
     }
 }
