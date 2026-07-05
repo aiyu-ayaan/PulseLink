@@ -11,6 +11,8 @@ import (
 	"syscall"
 	"time"
 	"unsafe"
+
+	"github.com/aiyu-ayaan/pulselink/apps/desktop/internal/eventbus"
 )
 
 type RECT struct {
@@ -62,25 +64,41 @@ type monitorHW struct {
 	isPrimary  bool
 }
 
-// enumerateMonitors returns all active monitors in order.
+// ── Monitor enumeration ───────────────────────────────────────────────
+
+var (
+	enumMu    sync.Mutex
+	enumOut   []monitorHW
+	enumOnce  sync.Once
+	enumCbPtr uintptr
+)
+
+// enumerateMonitors returns all active monitors in order. The callback is
+// created exactly once: syscall.NewCallback allocations are permanent and
+// capped process-wide, so creating one per call leaks until a panic.
 func enumerateMonitors() []monitorHW {
-	var result []monitorHW
-	callback := syscall.NewCallback(func(hMonitor, hdcMonitor, lprcMonitor, dwData uintptr) uintptr {
-		var mi MONITORINFOEXW
-		mi.Size = uint32(unsafe.Sizeof(mi))
-		ret, _, _ := procGetMonitorInfoW.Call(hMonitor, uintptr(unsafe.Pointer(&mi)))
-		if ret != 0 {
-			name := syscall.UTF16ToString(mi.Device[:])
-			result = append(result, monitorHW{
-				hMonitor:   hMonitor,
-				deviceName: name,
-				isPrimary:  mi.Flags&1 != 0,
-			})
-		}
-		return 1
+	enumOnce.Do(func() {
+		enumCbPtr = syscall.NewCallback(func(hMonitor, hdcMonitor, lprcMonitor, dwData uintptr) uintptr {
+			var mi MONITORINFOEXW
+			mi.Size = uint32(unsafe.Sizeof(mi))
+			ret, _, _ := procGetMonitorInfoW.Call(hMonitor, uintptr(unsafe.Pointer(&mi)))
+			if ret != 0 {
+				enumOut = append(enumOut, monitorHW{
+					hMonitor:   hMonitor,
+					deviceName: syscall.UTF16ToString(mi.Device[:]),
+					isPrimary:  mi.Flags&1 != 0,
+				})
+			}
+			return 1
+		})
 	})
-	procEnumDisplayMonitors.Call(0, 0, callback, 0)
-	return result
+	enumMu.Lock()
+	defer enumMu.Unlock()
+	enumOut = nil
+	procEnumDisplayMonitors.Call(0, 0, enumCbPtr, 0)
+	out := make([]monitorHW, len(enumOut))
+	copy(out, enumOut)
+	return out
 }
 
 // ── WMI helpers (for laptop built-in panels) ──────────────────────────
@@ -140,39 +158,49 @@ func wmiSetBrightness(level int) bool {
 
 // ── DDC/CI helpers (with goroutine timeout) ───────────────────────────
 
-// ddcGetBrightness reads brightness via DDC/CI with a 2-second timeout.
-func ddcGetBrightness(hMonitor uintptr) (int, bool) {
+// ddcRaw maps a 0-100 percent onto the monitor's reported VCP brightness range.
+func ddcRaw(level int, minVal, maxVal uint32) uint32 {
+	if maxVal <= minVal {
+		return uint32(level)
+	}
+	return minVal + uint32(level)*(maxVal-minVal)/100
+}
+
+// ddcGetBrightness reads brightness and the raw VCP range via DDC/CI with a
+// 2-second timeout. level is normalised to 0-100.
+func ddcGetBrightness(hMonitor uintptr) (level int, minVal, maxVal uint32, ok bool) {
 	type result struct {
-		level int
-		ok    bool
+		level    int
+		min, max uint32
+		ok       bool
 	}
 	ch := make(chan result, 1)
 	go func() {
-		l, ok := ddcGetBrightnessSync(hMonitor)
-		ch <- result{l, ok}
+		l, mn, mx, ok := ddcGetBrightnessSync(hMonitor)
+		ch <- result{l, mn, mx, ok}
 	}()
 	select {
 	case r := <-ch:
-		return r.level, r.ok
+		return r.level, r.min, r.max, r.ok
 	case <-time.After(2 * time.Second):
-		return 0, false
+		return 0, 0, 0, false
 	}
 }
 
-func ddcGetBrightnessSync(hMonitor uintptr) (int, bool) {
+func ddcGetBrightnessSync(hMonitor uintptr) (int, uint32, uint32, bool) {
 	var numPhysical uint32
 	ret, _, _ := procGetNumberOfPhysicalMonitorsFromHMONITOR.Call(
 		hMonitor, uintptr(unsafe.Pointer(&numPhysical)),
 	)
 	if ret == 0 || numPhysical == 0 {
-		return 0, false
+		return 0, 0, 0, false
 	}
 	pms := make([]PHYSICAL_MONITOR, numPhysical)
 	ret, _, _ = procGetPhysicalMonitorsFromHMONITOR.Call(
 		hMonitor, uintptr(numPhysical), uintptr(unsafe.Pointer(&pms[0])),
 	)
 	if ret == 0 {
-		return 0, false
+		return 0, 0, 0, false
 	}
 	defer procDestroyPhysicalMonitors.Call(uintptr(numPhysical), uintptr(unsafe.Pointer(&pms[0])))
 
@@ -186,27 +214,29 @@ func ddcGetBrightnessSync(hMonitor uintptr) (int, bool) {
 		)
 		if r != 0 && maxVal > minVal {
 			pct := int((curVal - minVal) * 100 / (maxVal - minVal))
-			return pct, true
+			return pct, minVal, maxVal, true
 		}
 	}
-	return 0, false
+	return 0, 0, 0, false
 }
 
-// ddcSetBrightness sets brightness via DDC/CI with a 2-second timeout.
-func ddcSetBrightness(hMonitor uintptr, level int) bool {
+// ddcSetBrightness sets brightness via DDC/CI with a 2-second timeout. The
+// second return distinguishes a timeout (outcome unknown, the late write may
+// still land) from an outright failure.
+func ddcSetBrightness(hMonitor uintptr, level int, minVal, maxVal uint32) (ok bool, timedOut bool) {
 	ch := make(chan bool, 1)
 	go func() {
-		ch <- ddcSetBrightnessSync(hMonitor, level)
+		ch <- ddcSetBrightnessSync(hMonitor, level, minVal, maxVal)
 	}()
 	select {
 	case ok := <-ch:
-		return ok
+		return ok, false
 	case <-time.After(2 * time.Second):
-		return false
+		return false, true
 	}
 }
 
-func ddcSetBrightnessSync(hMonitor uintptr, level int) bool {
+func ddcSetBrightnessSync(hMonitor uintptr, level int, minVal, maxVal uint32) bool {
 	var numPhysical uint32
 	ret, _, _ := procGetNumberOfPhysicalMonitorsFromHMONITOR.Call(
 		hMonitor, uintptr(unsafe.Pointer(&numPhysical)),
@@ -223,9 +253,10 @@ func ddcSetBrightnessSync(hMonitor uintptr, level int) bool {
 	}
 	defer procDestroyPhysicalMonitors.Call(uintptr(numPhysical), uintptr(unsafe.Pointer(&pms[0])))
 
+	raw := ddcRaw(level, minVal, maxVal)
 	ok := false
 	for _, pm := range pms {
-		r, _, _ := procSetMonitorBrightness.Call(pm.HPhysicalMonitor, uintptr(level))
+		r, _, _ := procSetMonitorBrightness.Call(pm.HPhysicalMonitor, uintptr(raw))
 		if r != 0 {
 			ok = true
 		}
@@ -264,90 +295,186 @@ func setGammaRamp(deviceName string, level int) bool {
 	return ret != 0
 }
 
-// ── Probe (runs once at startup to detect capabilities) ───────────────
+// ── Probe (detects the working method per monitor) ────────────────────
 
-// probeResult records what method works for each monitor.
-type probeResult struct {
-	method string // "wmi", "ddc", "gamma"
-	level  int
-}
-
-// probeMonitors runs once at startup. It tests each method per monitor
-// and caches which one works so subsequent get/set calls are instant.
+// probeMonitors tests each method per monitor and caches which one works so
+// subsequent get/set calls are instant. Hardware reads run outside the lock —
+// the WMI query alone can take seconds.
 func (s *Service) probeMonitors() {
 	monitors := enumerateMonitors()
 	if len(monitors) == 0 {
 		return
 	}
 
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	// First check if WMI is available (laptop built-in display).
-	hasWMI := false
-	wmiLevel := 0
-	if lvl, ok := wmiGetBrightness(); ok {
-		hasWMI = true
-		wmiLevel = lvl
-		s.log.Info("WMI brightness available (laptop built-in display)")
+	wmiLevel, hasWMI := wmiGetBrightness()
+	if hasWMI {
+		s.log.Info("WMI brightness available (laptop built-in panel)")
 	}
-
 	maxComp := s.cfg().MaxCompatibilityMode
-	var result []MonitorBrightness
-	s.methodCache = make(map[string]string)
 
+	type probed struct {
+		method   string
+		level    int
+		min, max uint32
+	}
+	infos := make([]probed, len(monitors))
 	for i, mon := range monitors {
-		id := fmt.Sprintf("monitor-%d", i)
-		mb := MonitorBrightness{
-			ID:   id,
-			Name: monitorLabel(mon, i),
-		}
-
-		// For the primary monitor on a laptop, WMI controls the real backlight
-		if hasWMI && mon.isPrimary {
-			mb.Level = wmiLevel
-			mb.Method = "wmi"
-			s.methodCache[id] = "wmi"
-			s.lastLevels[id] = wmiLevel
-			result = append(result, mb)
-			continue
-		}
-
-		// Try DDC/CI (with timeout)
 		if !maxComp {
-			if level, ok := ddcGetBrightness(mon.hMonitor); ok {
-				mb.Level = level
-				mb.Method = "ddc"
-				s.methodCache[id] = "ddc"
-				s.lastLevels[id] = level
-				result = append(result, mb)
-				continue
+			if level, mn, mx, ok := ddcGetBrightness(mon.hMonitor); ok {
+				infos[i] = probed{method: "ddc", level: level, min: mn, max: mx}
 			}
 		}
-
-		// Fallback: gamma ramp
-		mb.Level = 100
-		mb.Method = "gamma"
-		s.methodCache[id] = "gamma"
-		s.lastLevels[id] = 100
-		result = append(result, mb)
+	}
+	// WMI drives the built-in backlight. It belongs to the first display that
+	// DDC/CI cannot reach (laptop panels don't speak DDC), regardless of which
+	// monitor Windows calls primary. Everything else falls back to gamma.
+	wmiTaken := false
+	for i := range infos {
+		if infos[i].method != "" {
+			continue
+		}
+		if hasWMI && !wmiTaken {
+			infos[i] = probed{method: "wmi", level: wmiLevel}
+			wmiTaken = true
+		} else {
+			infos[i] = probed{method: "gamma", level: -1} // level resolved from cache below
+		}
 	}
 
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.methodCache = make(map[string]string)
+	s.ddcRange = make(map[string][2]uint32)
+	var result []MonitorBrightness
+	for i, mon := range monitors {
+		id := fmt.Sprintf("monitor-%d", i)
+		info := infos[i]
+		level := info.level
+		if level < 0 { // gamma has no readback; keep the last level we applied
+			if v, ok := s.lastLevels[id]; ok {
+				level = v
+			} else {
+				level = 100
+			}
+		}
+		s.methodCache[id] = info.method
+		if info.method == "ddc" {
+			s.ddcRange[id] = [2]uint32{info.min, info.max}
+		}
+		s.lastLevels[id] = level
+		result = append(result, MonitorBrightness{
+			ID:     id,
+			Name:   monitorLabel(mon, i),
+			Level:  level,
+			Method: info.method,
+		})
+	}
 	s.lastMonitors = result
 	s.monitorHW = monitors
 	s.probed = true
 	s.log.Info("brightness probe complete", "monitors", len(result))
 }
 
+// ensureProbed runs the probe once (or again after settings invalidate it).
+func (s *Service) ensureProbed() {
+	s.probeMu.Lock()
+	defer s.probeMu.Unlock()
+	s.mu.Lock()
+	done := s.probed
+	s.mu.Unlock()
+	if !done {
+		s.probeMonitors()
+	}
+}
+
+// maybeRefresh re-reads hardware levels in the background (throttled) so the
+// UI reflects changes made on the monitor itself, and re-probes when displays
+// were added or removed. Publishes brightness.changed when anything moved.
+func (s *Service) maybeRefresh() {
+	s.mu.Lock()
+	if s.refreshing || time.Since(s.lastRefresh) < 5*time.Second {
+		s.mu.Unlock()
+		return
+	}
+	s.refreshing = true
+	s.mu.Unlock()
+
+	go func() {
+		defer func() {
+			s.mu.Lock()
+			s.refreshing = false
+			s.lastRefresh = time.Now()
+			s.mu.Unlock()
+		}()
+
+		monitors := enumerateMonitors()
+		s.mu.Lock()
+		countChanged := len(monitors) != len(s.monitorHW)
+		s.mu.Unlock()
+
+		changed := false
+		if countChanged {
+			s.log.Info("display configuration changed, re-probing")
+			s.probeMu.Lock()
+			s.probeMonitors()
+			s.probeMu.Unlock()
+			changed = true
+		} else {
+			for i := range monitors {
+				id := fmt.Sprintf("monitor-%d", i)
+				s.mu.Lock()
+				// HMONITOR handles go stale across display mode changes;
+				// refresh them while we have a current enumeration.
+				s.monitorHW[i].hMonitor = monitors[i].hMonitor
+				method := s.methodCache[id]
+				busy := s.inFlight[id]
+				last := s.lastLevels[id]
+				s.mu.Unlock()
+				if busy {
+					continue // don't fight an in-flight write
+				}
+				var level int
+				var ok bool
+				switch method {
+				case "ddc":
+					level, _, _, ok = ddcGetBrightness(monitors[i].hMonitor)
+				case "wmi":
+					level, ok = wmiGetBrightness()
+				}
+				if ok && level != last {
+					s.mu.Lock()
+					s.lastLevels[id] = level
+					for j := range s.lastMonitors {
+						if s.lastMonitors[j].ID == id {
+							s.lastMonitors[j].Level = level
+						}
+					}
+					s.mu.Unlock()
+					changed = true
+				}
+			}
+		}
+		if changed {
+			s.publishState()
+		}
+	}()
+}
+
+func (s *Service) publishState() {
+	s.mu.Lock()
+	state := BrightnessState{Monitors: append([]MonitorBrightness(nil), s.lastMonitors...)}
+	s.mu.Unlock()
+	s.bus.Publish(eventbus.Event{Topic: "brightness.changed", Payload: state})
+}
+
 // ── Public API ────────────────────────────────────────────────────────
 
 func (s *Service) GetBrightness() (any, error) {
-	if !s.probed {
-		s.probeMonitors()
-	}
+	s.ensureProbed()
+	s.maybeRefresh()
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return BrightnessState{Monitors: s.lastMonitors}, nil
+	return BrightnessState{Monitors: append([]MonitorBrightness(nil), s.lastMonitors...)}, nil
 }
 
 func (s *Service) SetBrightness(monitorID string, level int) error {
@@ -358,77 +485,48 @@ func (s *Service) SetBrightness(monitorID string, level int) error {
 	if level > 100 {
 		level = 100
 	}
-
-	if !s.probed {
-		s.probeMonitors()
-	}
+	s.ensureProbed()
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	applyAll := monitorID == "all"
-
-	// Resolve target index
-	targetIdx := -1
-	for i := range s.monitorHW {
-		if fmt.Sprintf("monitor-%d", i) == monitorID {
-			targetIdx = i
-			break
+	var targets []int
+	if monitorID == "all" {
+		for i := range s.monitorHW {
+			targets = append(targets, i)
+		}
+	} else {
+		targetIdx := -1
+		for i := range s.monitorHW {
+			if fmt.Sprintf("monitor-%d", i) == monitorID {
+				targetIdx = i
+				break
+			}
+		}
+		if targetIdx < 0 {
+			switch strings.ToLower(monitorID) {
+			case "internal", "":
+				if len(s.monitorHW) > 0 {
+					targetIdx = 0
+				}
+			case "external":
+				if len(s.monitorHW) > 1 {
+					targetIdx = 1
+				} else if len(s.monitorHW) > 0 {
+					targetIdx = 0
+				}
+			default:
+				return fmt.Errorf("unknown monitor: %s", monitorID)
+			}
+		}
+		if targetIdx >= 0 {
+			targets = append(targets, targetIdx)
 		}
 	}
-	if targetIdx < 0 && !applyAll {
-		switch strings.ToLower(monitorID) {
-		case "internal", "":
-			if len(s.monitorHW) > 0 {
-				targetIdx = 0
-			}
-		case "external":
-			if len(s.monitorHW) > 1 {
-				targetIdx = 1
-			} else if len(s.monitorHW) > 0 {
-				targetIdx = 0
-			}
-		default:
-			return fmt.Errorf("unknown monitor: %s", monitorID)
-		}
-	}
 
-	apply := func(idx int) {
+	for _, idx := range targets {
 		id := fmt.Sprintf("monitor-%d", idx)
-		method := s.methodCache[id]
-		mon := s.monitorHW[idx]
-
-		switch method {
-		case "wmi":
-			// Run WMI in background — don't block the response
-			go func() {
-				if wmiSetBrightness(level) {
-					s.log.Info("brightness set via WMI", "monitor", id, "level", level)
-				} else {
-					s.log.Warn("WMI set brightness failed, trying gamma", "monitor", id)
-					setGammaRamp(mon.deviceName, level)
-				}
-			}()
-		case "ddc":
-			// Run DDC/CI in background — don't block the response
-			go func() {
-				if ddcSetBrightness(mon.hMonitor, level) {
-					s.log.Info("brightness set via DDC/CI", "monitor", id, "level", level)
-				} else {
-					s.log.Warn("DDC/CI set failed, trying gamma", "monitor", id)
-					setGammaRamp(mon.deviceName, level)
-				}
-			}()
-		default:
-			// Gamma is instant — do it inline
-			if setGammaRamp(mon.deviceName, level) {
-				s.log.Info("brightness set via gamma ramp", "monitor", id, "level", level)
-			} else {
-				s.log.Warn("gamma ramp set failed", "monitor", id)
-			}
-		}
-
-		// Update cache immediately so the response is instant
+		// Update the cache immediately so the response is instant.
 		s.lastLevels[id] = level
 		for j := range s.lastMonitors {
 			if s.lastMonitors[j].ID == id {
@@ -436,17 +534,82 @@ func (s *Service) SetBrightness(monitorID string, level int) error {
 				break
 			}
 		}
-	}
-
-	if applyAll {
-		for i := range s.monitorHW {
-			apply(i)
+		// Latest-wins queue: one worker per monitor serialises the slow
+		// DDC/WMI bus and coalesces slider spam down to the newest value.
+		s.pending[id] = level
+		if !s.inFlight[id] {
+			s.inFlight[id] = true
+			go s.applyWorker(idx, id)
 		}
-	} else if targetIdx >= 0 && targetIdx < len(s.monitorHW) {
-		apply(targetIdx)
 	}
-
 	return nil
+}
+
+// applyWorker drains pending levels for one monitor, applying the newest value
+// each round. DDC/CI is a slow serial bus — concurrent writes stall or corrupt
+// it, so all hardware access for a monitor funnels through here.
+func (s *Service) applyWorker(idx int, id string) {
+	for {
+		s.mu.Lock()
+		level, ok := s.pending[id]
+		if !ok || idx >= len(s.monitorHW) {
+			delete(s.pending, id)
+			s.inFlight[id] = false
+			s.mu.Unlock()
+			return
+		}
+		delete(s.pending, id)
+		method := s.methodCache[id]
+		mon := s.monitorHW[idx]
+		rng, hasRng := s.ddcRange[id]
+		gammaDim := s.gammaDim[id]
+		s.mu.Unlock()
+
+		hwOK, timedOut := false, false
+		switch method {
+		case "wmi":
+			hwOK = wmiSetBrightness(level)
+		case "ddc":
+			mn, mx := uint32(0), uint32(100)
+			if hasRng {
+				mn, mx = rng[0], rng[1]
+			}
+			hwOK, timedOut = ddcSetBrightness(mon.hMonitor, level, mn, mx)
+		}
+
+		switch {
+		case hwOK:
+			s.log.Info("brightness applied", "monitor", id, "level", level, "method", method)
+			if gammaDim {
+				// A previous fallback dimmed via gamma; undo it now that the
+				// real backlight responds again, or the screen stays dark.
+				setGammaRamp(mon.deviceName, 100)
+				s.mu.Lock()
+				s.gammaDim[id] = false
+				s.mu.Unlock()
+			}
+		case method == "gamma":
+			if setGammaRamp(mon.deviceName, level) {
+				s.mu.Lock()
+				s.gammaDim[id] = level < 100
+				s.mu.Unlock()
+				s.log.Info("brightness applied via gamma ramp", "monitor", id, "level", level)
+			} else {
+				s.log.Warn("gamma ramp set failed", "monitor", id)
+			}
+		case timedOut:
+			// Outcome unknown — the late DDC write may still land. Don't stack
+			// a gamma dim on top of it.
+			s.log.Warn("hardware brightness set timed out", "monitor", id, "method", method)
+		default:
+			s.log.Warn("hardware brightness set failed, falling back to gamma", "monitor", id, "method", method)
+			if setGammaRamp(mon.deviceName, level) {
+				s.mu.Lock()
+				s.gammaDim[id] = level < 100
+				s.mu.Unlock()
+			}
+		}
+	}
 }
 
 func monitorLabel(mon monitorHW, idx int) string {
@@ -456,6 +619,3 @@ func monitorLabel(mon monitorHW, idx int) string {
 	}
 	return label
 }
-
-// probeResultCache is used by concurrent probing.
-var probeOnce sync.Once

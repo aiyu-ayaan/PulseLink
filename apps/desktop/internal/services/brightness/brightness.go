@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"sync"
+	"time"
 
 	"github.com/aiyu-ayaan/pulselink/apps/desktop/internal/config"
 	"github.com/aiyu-ayaan/pulselink/apps/desktop/internal/eventbus"
@@ -35,11 +36,18 @@ type Service struct {
 	bus          *eventbus.Bus
 	cfg          func() config.Config
 	mu           sync.Mutex
+	probeMu      sync.Mutex // serialises probes (they do slow hardware reads outside mu)
 	lastMonitors []MonitorBrightness
-	lastLevels   map[string]int    // id -> last known level
-	methodCache  map[string]string // id -> "wmi"/"ddc"/"gamma"
-	monitorHW    []monitorHW       // cached hardware handles (Windows only, empty on other OS)
+	lastLevels   map[string]int       // id -> last known level
+	methodCache  map[string]string    // id -> "wmi"/"ddc"/"gamma"
+	ddcRange     map[string][2]uint32 // id -> {min,max} raw VCP range reported by the monitor
+	pending      map[string]int       // id -> newest requested level awaiting hardware write
+	inFlight     map[string]bool      // id -> a worker is draining pending for this monitor
+	gammaDim     map[string]bool      // id -> gamma ramp currently dimmed by a fallback
+	monitorHW    []monitorHW          // cached hardware handles (Windows only, empty on other OS)
 	probed       bool
+	refreshing   bool
+	lastRefresh  time.Time
 }
 
 func New(log *slog.Logger, bus *eventbus.Bus, cfg func() config.Config) *Service {
@@ -49,6 +57,10 @@ func New(log *slog.Logger, bus *eventbus.Bus, cfg func() config.Config) *Service
 		cfg:         cfg,
 		lastLevels:  make(map[string]int),
 		methodCache: make(map[string]string),
+		ddcRange:    make(map[string][2]uint32),
+		pending:     make(map[string]int),
+		inFlight:    make(map[string]bool),
+		gammaDim:    make(map[string]bool),
 	}
 }
 
@@ -72,17 +84,6 @@ func (s *Service) Start(ctx context.Context) error {
 func (s *Service) Stop(ctx context.Context) error {
 	s.log.Info("brightness service stopping")
 	return nil
-}
-
-func (s *Service) getLastLevel(id string) int {
-	if v, ok := s.lastLevels[id]; ok {
-		return v
-	}
-	return 100
-}
-
-func (s *Service) setLastLevel(id string, level int) {
-	s.lastLevels[id] = level
 }
 
 func (s *Service) Handle(ctx context.Context, req protocol.Envelope) (any, error) {
